@@ -1,1 +1,0 @@
-`npm test` runs the template-converter tests plus the build-script unit tests; `npm run convert:template` / `convert:presentation-template` regenerate template artifacts; `npm run sync:presentation-export[:force|check-only]` pins the @presenton/export-core runtime consumed by all children; `docker compose up --build` launches the full stack against `./app_data`.

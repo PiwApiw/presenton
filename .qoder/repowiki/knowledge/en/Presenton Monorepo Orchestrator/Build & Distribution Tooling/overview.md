@@ -1,1 +1,0 @@
-Node.js and Python scripts that convert presentation templates, sync the pinned @presenton/export-core runtime, normalize user config from environment variables, and regenerate NOTICE files.

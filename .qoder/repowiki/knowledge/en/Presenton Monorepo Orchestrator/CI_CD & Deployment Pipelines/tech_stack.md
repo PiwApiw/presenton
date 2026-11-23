@@ -1,1 +1,0 @@
-GitHub Actions (actions/checkout@v4, setup-node@v4, setup-python@v5, astral-sh/setup-uv@v6, docker/build-push-action@v7 with QEMU for multi-arch), DigitalOcean App Platform manifest format, rclone configured against Cloudflare R2 S3-compatible API, Electron builder producing .deb and .AppImage, FastAPI + uv.lock, Next.js + Cypress component tests.

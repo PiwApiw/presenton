@@ -1,9 +1,0 @@
-schema_version: 1
-module_path: electron_desktop_app
-title: Presenton Electron Desktop Shell
-scope:
-    - electron/
-source_files: []
-depends_on: []
-related_to:
-    - path: presentation_templates

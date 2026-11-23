@@ -1,1 +1,0 @@
-Node.js ESM (`"type": "module"`) orchestrates Python FastAPI + Uvicorn, Next.js (dev vs standalone production), Nginx, and an optional Ollama binary; Sharp is the only root-level Node dependency used to verify the bundled presentation-export runtime's native deps at startup.

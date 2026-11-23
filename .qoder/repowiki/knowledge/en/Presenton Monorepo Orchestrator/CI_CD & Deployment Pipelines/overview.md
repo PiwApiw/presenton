@@ -1,1 +1,0 @@
-GitHub Actions workflows and DigitalOcean App Platform template that build, test, publish Docker images and Electron packages, mirror releases to R2, and deploy the app.

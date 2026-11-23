@@ -1,1 +1,0 @@
-Markdown documentation covering macOS development/distribution, Amazon Bedrock provider configuration, presentation generation modes, Docker multi-platform builds, and template v2 reference.

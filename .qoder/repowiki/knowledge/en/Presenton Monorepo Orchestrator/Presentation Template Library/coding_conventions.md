@@ -1,6 +1,0 @@
-- Every template package follows the same layout: a `template.json` manifest paired with a sibling `static/` directory holding all referenced assets and a `thumbnail.png` preview.
-- Backgrounds are expressed as dedicated `merged_components` entries (e.g. `background_art`, `slide_background`, `full_bleed_background`, `plain_background`) rather than ad-hoc elements, enabling background swapping per slide.
-- Each component exposes multiple `variants`, each variant being a fully positioned composition with a fixed `position` object and an ordered `elements` array — variants model alternative visual realizations of the same logical region.
-- Element trees use typed nodes (`image`, `vector`, `text`, `group`, `container`, `flex`) with explicit `position` + `size` coordinates on a 1280×720 canvas; decorative backgrounds carry `decorative: true` while editable text/image slots carry `decorative: false` plus `name` identifiers for data binding.
-- Text elements define per-run font overrides inside a `runs` array and expose `max_length` / `min_length` constraints alongside the `name` field, marking them as user-editable data targets.
-- Asset filenames embed a stable hash suffix (e.g. `Freeform_10-80a910c5327f.svg`, `image6-67ec4cfdc5cc.jpeg`) to support cache-busting, while font families are mapped by human-readable keys in the manifest's `fonts` object.

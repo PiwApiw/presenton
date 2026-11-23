@@ -1,4 +1,0 @@
-- Workflows pin every third-party action to an explicit version tag (e.g. `actions/checkout@v4`, `docker/setup-buildx-action@v3`) rather than floating tags.
-- Long-running or release-triggered workflows declare a `concurrency` group keyed on the release tag/ref/run id with `cancel-in-progress: false` to prevent overlapping builds.
-- Secrets are consumed through `secrets.*` expressions and scoped via GitHub Environments (e.g. `environment: sync_r2`) instead of being embedded in the workflow file.
-- Python dependencies are installed via `uv sync --locked` against a committed `uv.lock`, while Node dependencies use `npm ci` with `cache-dependency-path` pointing at each subproject's lockfile.

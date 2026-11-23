@@ -1,3 +1,0 @@
-- Each operator-facing doc follows a consistent structure: required configuration table mapping UI fields to environment variables, followed by optional/advanced fields, example `docker run` invocations, IAM/permissions notes, and a Troubleshooting section.
-- Environment variable names are presented in uppercase monospace within prose and in fenced code blocks, and tables explicitly pair each UI field with its corresponding env var name.
-- Cross-references between docs use relative Markdown links (e.g., `./direct-distribution.md`) and link back to the repository's top-level README for prerequisites.

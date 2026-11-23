@@ -1,1 +1,0 @@
-JSON-based template schema; assets are SVG vector graphics, PNG/JPG images, and OpenType/TTF fonts (Montserrat, Poppins, DM Sans, Playfair Display, Anton, Lato, Archivo Black, Proxima Nova, Arimo).

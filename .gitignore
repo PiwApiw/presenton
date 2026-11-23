@@ -35,3 +35,7 @@ servers/fastapi/dist/
 servers/fastapi/fastembed_cache/
 servers/fastapi/*.egg-info/
 pptxcollection/
+.do/
+.github/
+.qoder/
+.superpowers/

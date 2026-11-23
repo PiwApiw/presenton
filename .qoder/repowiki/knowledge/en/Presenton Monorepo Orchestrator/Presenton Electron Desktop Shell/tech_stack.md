@@ -1,1 +1,0 @@
-Electron 42.2.0 + TypeScript 5.8, built with electron-builder 26.x; Sentry SDK (`@sentry/electron` v7) for main/renderer error reporting; Tailwind CSS v4 CLI for UI asset compilation; Sharp for image processing; Puppeteer/@puppeteer/browsers for Chromium-based slide preview/export; @llamaindex/liteparse for document parsing.

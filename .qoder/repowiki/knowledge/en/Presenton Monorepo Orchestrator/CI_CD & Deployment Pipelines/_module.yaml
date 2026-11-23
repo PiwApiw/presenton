@@ -1,9 +1,0 @@
-schema_version: 1
-module_path: ci_and_deploy
-title: CI/CD & Deployment Pipelines
-scope:
-    - .github/
-    - .do/
-source_files: []
-depends_on: []
-related_to: []

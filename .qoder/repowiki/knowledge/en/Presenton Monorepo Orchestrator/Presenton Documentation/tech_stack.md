@@ -1,1 +1,0 @@
-Plain Markdown; documentation is consumed directly by users and linked from the repository README — no MkDocs, Docusaurus, or similar tooling is configured in this scope.
