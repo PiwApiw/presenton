@@ -88,6 +88,9 @@ import {
 
 
 import { updateSlideUi } from "@/store/slices/presentationGeneration";
+import { isAutoTypography } from "@/components/typography/effective";
+import type { TypographyConfig } from "@/components/typography/effective";
+import { applyTypographyToSlide } from "@/components/typography/apply-to-slide";
 import { useNearViewport } from "@/app/hooks/useNearViewport";
 import { resolveBackendAssetSource } from "@/utils/api";
 import { bucketFileSize, sanitizeAnalyticsError } from "@/utils/analytics";
@@ -313,6 +316,8 @@ type TemplateV2KonvaSlideProps = {
   slideIndex: number;
   renderIndex?: number;
   fonts?: unknown;
+  /** Role typography painted on top of the stored layout; never persisted. */
+  typography?: TypographyConfig | null;
   displayScale?: number;
   enableViewportCulling?: boolean;
   isSelected?: boolean;
@@ -396,6 +401,7 @@ function TemplateV2KonvaSlideComponent({
   slideIndex,
   renderIndex,
   fonts,
+  typography = null,
   displayScale = 1,
   enableViewportCulling = false,
   isSelected = false,
@@ -565,13 +571,23 @@ function TemplateV2KonvaSlideComponent({
     setViewportRoot(node);
   }, [setViewportRoot]);
 
+  // Role typography is a paint-time overlay: `uiDraft` keeps the stored font
+  // sizes so committing an edit cannot bake an override into the slide.
+  const renderUi = useMemo(
+    () =>
+      typography && !isAutoTypography(typography)
+        ? applyTypographyToSlide(uiDraft, typography)
+        : uiDraft,
+    [typography, uiDraft],
+  );
+
   const components = useMemo(
-    () => readArray(uiDraft.components).filter(isRecord) as RawComponent[],
-    [uiDraft.components],
+    () => readArray(renderUi.components).filter(isRecord) as RawComponent[],
+    [renderUi.components],
   );
   const rootElements = useMemo(
-    () => readArray(uiDraft.elements).filter(isRecord) as RawElement[],
-    [uiDraft.elements],
+    () => readArray(renderUi.elements).filter(isRecord) as RawElement[],
+    [renderUi.elements],
   );
   const setSelectionNodeRef = useCallback(
     (key: string, node: Konva.Node | null) => {
@@ -3126,7 +3142,7 @@ function TemplateV2KonvaSlideComponent({
           editingKey={editingKey}
           nodeRefs={nodeRefs}
           revision={fontLoadState.revision}
-          ui={uiDraft}
+          ui={renderUi}
         />
       ) : null}
       {!infographicCanvasSelection ? <TemplateV2SelectionToolbar

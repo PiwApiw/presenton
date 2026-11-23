@@ -1,0 +1,7 @@
+Each top-level directory under `templates/` (civic, dynamic, editorial, executive, general, horizon, landmark, modern, momentum, mosaic, nova, pulse, signal, standard, swift, verdant) is an independent template package containing:
+- A `template.json` manifest that declares the template identity (`id`, `name`, `description`, `thumbnail`, optional `icon_type`) and a `fonts` map from font family names to `.ttf`/`.otf` files.
+- A `static/` folder bundling all referenced assets: SVG/PNG/JPG artwork, thumbnail images, and the TTF/OTF fonts declared in the manifest.
+
+The `template.json` schema is the single source of truth for rendering. It uses a `merged_components` array where each component groups multiple `variants`; every variant carries a fixed `position`, `size`, and ordered `elements` tree. Element types include `image`, `vector` (polygon shapes with fill/shadow), `text` (with nested `runs` per run-level font overrides), `group`, `container`, and `flex` layouts. Backgrounds are modeled as dedicated components (e.g. `background_art`, `slide_background`, `full_bleed_background`, `plain_background`) so background layers can be swapped independently of foreground content.
+
+There is no runtime code in this module — it is pure declarative data consumed by the application's template engine. The only cross-template coupling is the shared 1280×720 canvas coordinate system used across all element positions and sizes.

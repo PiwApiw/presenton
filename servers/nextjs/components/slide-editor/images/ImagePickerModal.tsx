@@ -31,9 +31,14 @@ import { cn } from "@/lib/utils";
 import type { RootState } from "@/store/store";
 import { resolveBackendAssetSource } from "@/utils/api";
 import { IMAGE_PROVIDERS } from "@/utils/providerConstants";
+import {
+  resolveImageSources,
+  type ImageSourceId,
+} from "@/components/slide-editor/images/image-sources";
+import { ImageSourceToggle } from "@/components/slide-editor/images/ImageSourceToggle";
 
 type PickerView = "discover" | "uploads";
-type PickerImageSource = "generated" | "uploaded";
+type PickerImageSource = "generated" | "uploaded" | "stock";
 type PickerImage = {
   deletable?: boolean;
   id?: string;
@@ -42,7 +47,6 @@ type PickerImage = {
   url: string;
 };
 
-const STOCK_IMAGE_PROVIDERS = new Set(["pexels", "pixabay"]);
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 
 function assetToPickerImage(
@@ -69,14 +73,6 @@ function dedupePickerImages(images: PickerImage[]) {
   });
 }
 
-function normalizedProvider(value: string | null | undefined) {
-  const provider = (value || "").trim().toLowerCase();
-  if (provider === "pixels" || provider === "pixel" || provider === "pexel") {
-    return "pexels";
-  }
-  return provider;
-}
-
 export function ImagePickerModal({
   currentImage,
   initialPrompt,
@@ -93,10 +89,16 @@ export function ImagePickerModal({
   onSelect: (url: string, prompt?: string) => void;
 }) {
   const llmConfig = useSelector((state: RootState) => state.userConfig.llm_config);
-  const provider = normalizedProvider(llmConfig?.IMAGE_PROVIDER);
-  const stockProvider = STOCK_IMAGE_PROVIDERS.has(provider) ? provider : null;
-  const providerLabel = IMAGE_PROVIDERS[provider]?.label ?? "AI image provider";
-  const generationDisabled = Boolean(llmConfig?.DISABLE_IMAGE_GENERATION);
+  const sources = useMemo(() => resolveImageSources(llmConfig), [llmConfig]);
+  const [source, setSource] = useState<ImageSourceId>(
+    sources.defaultSource ?? "ai",
+  );
+  const stockProviderLabel =
+    sources.stockProvider === "pixabay" ? "Pixabay" : "Pexels";
+  const aiProviderLabel =
+    IMAGE_PROVIDERS[sources.aiProvider ?? ""]?.label ?? "AI image provider";
+  const activeProviderLabel =
+    source === "stock" ? stockProviderLabel : aiProviderLabel;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [view, setView] = useState<PickerView>("discover");
   const [query, setQuery] = useState(initialPrompt || "");
@@ -110,11 +112,6 @@ export function ImagePickerModal({
   const [error, setError] = useState<string | null>(null);
 
   const currentSource = resolveBackendAssetSource(currentImage || "");
-  const apiKey = useMemo(() => {
-    if (stockProvider === "pexels") return llmConfig?.PEXELS_API_KEY;
-    if (stockProvider === "pixabay") return llmConfig?.PIXABAY_API_KEY;
-    return undefined;
-  }, [llmConfig?.PEXELS_API_KEY, llmConfig?.PIXABAY_API_KEY, stockProvider]);
 
   useEffect(() => {
     if (!open) return;
@@ -125,10 +122,17 @@ export function ImagePickerModal({
     setIsLoadingLibrary(false);
     setError(null);
     setIsDragging(false);
-  }, [initialPrompt, open, provider]);
+    setSource(sources.defaultSource ?? "ai");
+  }, [initialPrompt, open, sources.defaultSource]);
 
   useEffect(() => {
-    if (!open || view !== "discover" || stockProvider) return;
+    if (sources.availableSources.includes(source)) return;
+    if (sources.defaultSource) setSource(sources.defaultSource);
+  }, [source, sources.availableSources, sources.defaultSource]);
+
+  useEffect(() => {
+    if (!open || view !== "discover" || source !== "ai" || !sources.aiAvailable)
+      return;
 
     let cancelled = false;
     setIsLoadingLibrary(true);
@@ -160,23 +164,33 @@ export function ImagePickerModal({
     return () => {
       cancelled = true;
     };
-  }, [open, stockProvider, view]);
+  }, [open, source, sources.aiAvailable, view]);
 
   useEffect(() => {
-    if (!open || view !== "discover" || !stockProvider) return;
+    if (
+      !open ||
+      view !== "discover" ||
+      source !== "stock" ||
+      !sources.stockProvider
+    )
+      return;
 
     let cancelled = false;
     const starterQuery = (initialPrompt || "").trim() || "inspiration";
     setIsLoadingLibrary(true);
     setError(null);
     ImagesApi.searchStockImages(starterQuery, 24, {
-      provider: stockProvider,
-      apiKey,
+      provider: sources.stockProvider,
+      apiKey: sources.stockApiKey ?? undefined,
     })
       .then((urls) => {
         if (cancelled) return;
         setDiscoverImages(
-          urls.map((url) => ({ prompt: starterQuery, url })),
+          urls.map((url) => ({
+            prompt: starterQuery,
+            source: "stock" as const,
+            url,
+          })),
         );
         if (!urls.length) {
           setError("No starter images found. Try searching for something else.");
@@ -198,7 +212,14 @@ export function ImagePickerModal({
     return () => {
       cancelled = true;
     };
-  }, [apiKey, initialPrompt, open, stockProvider, view]);
+  }, [
+    initialPrompt,
+    open,
+    source,
+    sources.stockApiKey,
+    sources.stockProvider,
+    view,
+  ]);
 
   useEffect(() => {
     if (!open || view !== "uploads" || isUploading) return;
@@ -242,16 +263,20 @@ export function ImagePickerModal({
   };
 
   const searchStockImages = async () => {
-    if (!stockProvider || !query.trim()) return;
+    if (!sources.stockProvider || !query.trim()) return;
     setIsWorking(true);
     setError(null);
     try {
       const urls = await ImagesApi.searchStockImages(query.trim(), 24, {
-        provider: stockProvider,
-        apiKey,
+        provider: sources.stockProvider,
+        apiKey: sources.stockApiKey ?? undefined,
       });
       setDiscoverImages(
-        urls.map((url) => ({ prompt: query.trim(), url })),
+        urls.map((url) => ({
+          prompt: query.trim(),
+          source: "stock" as const,
+          url,
+        })),
       );
       if (!urls.length) setError("No images found. Try different keywords.");
     } catch (searchError: unknown) {
@@ -267,7 +292,7 @@ export function ImagePickerModal({
   };
 
   const generateImages = async () => {
-    if (!query.trim() || generationDisabled) return;
+    if (!query.trim() || !sources.aiAvailable) return;
     setIsWorking(true);
     setError(null);
     try {
@@ -312,9 +337,12 @@ export function ImagePickerModal({
   };
 
   const runDiscover = () => {
-    if (!query.trim() || (generationDisabled && !stockProvider)) return;
-    if (stockProvider) void searchStockImages();
-    else void generateImages();
+    if (!query.trim()) return;
+    if (source === "stock") {
+      if (sources.stockAvailable) void searchStockImages();
+      return;
+    }
+    if (sources.aiAvailable) void generateImages();
   };
 
   const uploadFile = async (file: File | undefined) => {
@@ -377,6 +405,21 @@ export function ImagePickerModal({
     }
   };
 
+  const activeImageSource: PickerImageSource =
+    source === "stock" ? "stock" : "generated";
+  const discoverVisibleImages = discoverImages.filter(
+    (image) => image.source === activeImageSource,
+  );
+  const discoverEmptyMessage = !sources.availableSources.length
+    ? "Add an image provider in Settings, or upload your own image."
+    : source === "stock"
+      ? `Search ${stockProviderLabel} for an image.`
+      : sources.aiAvailable
+        ? "Generate images to see them here. Start by describing what you want to create above."
+        : sources.aiBlockedReason === "disabled"
+          ? "Image generation is disabled in Settings."
+          : "Set an AI image provider in Settings to generate images.";
+
   return (
     <DialogPrimitive.Root
       open={open}
@@ -400,7 +443,7 @@ export function ImagePickerModal({
                   Change Image
                 </DialogPrimitive.Title>
                 <DialogPrimitive.Description className="mt-0.5 text-[14px] font-normal tracking-[-0.42px] text-[#808080]">
-                  Choose an image from the library or upload your own.
+                  Search stock photos, generate with AI, or upload your own.
                 </DialogPrimitive.Description>
               </div>
               <button
@@ -466,14 +509,27 @@ export function ImagePickerModal({
               >
                 {view === "discover" ? (
                   <DiscoverControls
-                    disabled={generationDisabled && !stockProvider}
-                    isStock={Boolean(stockProvider)}
+                    disabled={
+                      source === "stock"
+                        ? !sources.stockAvailable
+                        : !sources.aiAvailable
+                    }
+                    source={source}
+                    sourceOptions={sources.availableSources}
+                    stockLabel={stockProviderLabel}
+                    aiLabel={aiProviderLabel}
+                    aiHint={
+                      sources.aiBlockedReason === "stock-provider"
+                        ? "Set an AI image provider in Settings to also generate images."
+                        : null
+                    }
                     isWorking={isWorking || isLoadingLibrary}
-                    providerLabel={providerLabel}
+                    providerLabel={activeProviderLabel}
                     query={query}
                     variationCount={variationCount}
                     onQueryChange={setQuery}
                     onRun={runDiscover}
+                    onSourceChange={setSource}
                     onVariationChange={(delta) =>
                       setVariationCount((count) =>
                         Math.max(1, Math.min(4, count + delta)),
@@ -490,19 +546,13 @@ export function ImagePickerModal({
 
                 <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1 [scrollbar-width:thin]">
                   {isLoadingLibrary || isWorking ? (
-                    <ImageSkeletons compact={Boolean(stockProvider)} />
+                    <ImageSkeletons compact={source === "stock"} />
                   ) : view === "discover" ? (
                     <ImageResults
-                      compact={Boolean(stockProvider)}
+                      compact={source === "stock"}
                       currentSource={currentSource}
-                      images={discoverImages}
-                      emptyMessage={
-                        generationDisabled && !stockProvider
-                          ? "Image generation is disabled in Settings."
-                          : stockProvider
-                            ? `Search ${providerLabel} for an image.`
-                            : "Generate images to see them here. Start by describing what you want to create above."
-                      }
+                      images={discoverVisibleImages}
+                      emptyMessage={discoverEmptyMessage}
                       onSelect={chooseImage}
                     />
                   ) : (
@@ -572,30 +622,54 @@ function PickerNavButton({
 
 function DiscoverControls({
   disabled,
-  isStock,
+  source,
+  sourceOptions,
+  stockLabel,
+  aiLabel,
+  aiHint,
   isWorking,
   providerLabel,
   query,
   variationCount,
   onQueryChange,
   onRun,
+  onSourceChange,
   onVariationChange,
 }: {
   disabled: boolean;
-  isStock: boolean;
+  source: ImageSourceId;
+  sourceOptions: ImageSourceId[];
+  stockLabel: string;
+  aiLabel: string;
+  aiHint?: string | null;
   isWorking: boolean;
   providerLabel: string;
   query: string;
   variationCount: number;
   onQueryChange: (value: string) => void;
   onRun: () => void;
+  onSourceChange: (source: ImageSourceId) => void;
   onVariationChange: (delta: number) => void;
 }) {
   const canRun = query.trim().length > 0 && !isWorking && !disabled;
+  const sourceToggle = (
+    <ImageSourceToggle
+      value={source}
+      options={sourceOptions}
+      labels={{ stock: "Stock", ai: "AI" }}
+      titles={{
+        stock: `Search ${stockLabel}`,
+        ai: `Generate with ${aiLabel}`,
+      }}
+      onChange={onSourceChange}
+    />
+  );
 
-  if (isStock) {
+  if (source === "stock") {
     return (
-      <div className="flex h-[41px] flex-none gap-2.5" aria-label={`Search ${providerLabel}`}>
+      <div className="flex flex-none flex-col gap-2.5">
+        {sourceToggle}
+        <div className="flex h-[41px] gap-2.5" aria-label={`Search ${providerLabel}`}>
         <label className="flex min-w-0 flex-1 items-center gap-2.5 rounded-[8px] border border-[rgba(219,219,219,0.6)] bg-white px-2.5">
           <Search className="size-3.5 flex-none" strokeWidth={1.8} aria-hidden="true" />
           <textarea
@@ -618,12 +692,18 @@ function DiscoverControls({
         >
           {isWorking ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
         </button>
+        </div>
+        {aiHint ? (
+          <p className="text-[11px] leading-4 text-[#808080]">{aiHint}</p>
+        ) : null}
       </div>
     );
   }
 
   return (
-    <div className="flex h-[76px] flex-none gap-2.5" aria-label={`Generate with ${providerLabel}`}>
+    <div className="flex flex-none flex-col gap-2.5">
+      {sourceToggle}
+      <div className="flex h-[76px] gap-2.5" aria-label={`Generate with ${providerLabel}`}>
       <textarea
         autoFocus
         value={query}
@@ -669,6 +749,7 @@ function DiscoverControls({
         >
           {isWorking ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
         </button>
+      </div>
       </div>
     </div>
   );

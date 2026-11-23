@@ -204,12 +204,29 @@ export function TextToolbar({
     scaleY: 1,
   });
   const updateFont = (fontPatch: Partial<Font>) => {
-    onChange(
-      index,
-      activeSelectionRange
-        ? mergeFontForTextSelection(element, activeSelectionRange, fontPatch)
-        : mergeFont(element, fontPatch),
+    const marksManual = Object.keys(fontPatch).some((key) =>
+      ["family", "size", "bold", "italic", "underline", "color"].includes(key),
     );
+    const nextPatch = marksManual ? { ...fontPatch, manual: true } : fontPatch;
+    if (activeSelectionRange) {
+      const nextElement = mergeFontForTextSelection(
+        element,
+        activeSelectionRange,
+        nextPatch,
+      );
+      // Selection edits patch the runs only, so mark the element itself too.
+      onChange(
+        index,
+        marksManual
+          ? {
+              ...nextElement,
+              font: { ...(nextElement.font ?? {}), manual: true },
+            }
+          : nextElement,
+      );
+      return;
+    }
+    onChange(index, mergeFont(element, nextPatch));
   };
   const loadFontFamily = useCallback(
     (family: string) => {

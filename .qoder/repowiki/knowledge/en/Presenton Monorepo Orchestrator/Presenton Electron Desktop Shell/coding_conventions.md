@@ -1,0 +1,6 @@
+- IPC surface is intentionally narrow: the preload only exposes a small typed object (`env`, `electron.exportPresentation`, `electron.readFile`) via `contextBridge.exposeInMainWorld`, and every call goes through `ipcRenderer.invoke` with a string channel name.
+- Cross-process communication between renderer and main is centralized — `app/ipc/index.ts` aggregates all handler registrations (`setupExportHandlers`, `setupReadFile`) so new IPC channels are added in one place.
+- Platform-specific Chromium flags are applied early in `main.ts` using `app.commandLine.appendSwitch` guarded by `process.platform` checks rather than global defaults.
+- All logging from the main process flows through the `safe-console` helpers (`safeLog`, `safeWarn`, `safeError`, `safeStderrWrite`) instead of direct `console.*` calls, ensuring Sentry breadcrumbs and stderr output are consistent.
+- External URL navigation is funneled through `open-target.ts` (`isSupportedExternalUrl` / `openExternalUrl`) and blocked via `will-navigate` / `will-redirect` / `setWindowOpenHandler` guards, never opened directly from renderer code.
+- Packaging behavior is driven by `build.js` reading environment variables (`PRESENTON_MAC_TARGET`, `PRESENTON_REQUIRE_MAC_SIGNING`, `PRESENTON_CODESIGN_TIMESTAMP_RETRIES`, etc.) rather than separate per-target config files.

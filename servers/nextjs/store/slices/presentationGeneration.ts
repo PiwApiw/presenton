@@ -23,6 +23,7 @@ export interface PresentationData {
   community_design_ids?: number[] | null;
   components?: any;
   fonts?: any;
+  typography?: import("@/components/typography/effective").TypographyConfig | null;
   structure?: any;
 }
 

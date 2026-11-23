@@ -5,6 +5,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useTailwindRuntimeReady } from "@/components/runtime/TailwindBrowserRuntime";
 import {
+  scopeTypographyCss,
+  typographyStyleCss,
+  type TypographyConfig,
+} from "@/components/typography/effective";
+import {
   localFontOptionsFromUnknown,
   renderLocalFontFaceCss,
 } from "@/components/slide-editor/text/local-fonts";
@@ -37,20 +42,29 @@ const SANITIZE_CONFIG: DOMPurifyConfig = {
   ALLOW_DATA_ATTR: true,
 };
 
+function styleBlock(css: string) {
+  return css ? `<style>${css.replaceAll("</style", "<\\/style")}</style>` : "";
+}
+
 function fontAssets(fonts: unknown) {
   const css = localFontOptionsFromUnknown(fonts)
     .map(renderLocalFontFaceCss)
     .join("");
-  return css ? `<style>${css.replaceAll("</style", "<\\/style")}</style>` : "";
+  return styleBlock(css);
 }
 
-function previewDocument(html: string, fonts: unknown) {
+function previewDocument(
+  html: string,
+  fonts: unknown,
+  typography?: TypographyConfig | null,
+) {
   return `<!doctype html>
   <html>
     <head>
       <meta charset="utf-8">
       <meta name="viewport" content="width=1280, initial-scale=1">
       ${fontAssets(fonts)}
+      ${styleBlock(typographyStyleCss(typography))}
       <script src="${TAILWIND_BROWSER_SCRIPT_URL}"></script>
       <script src="${CHART_BROWSER_SCRIPT_URL}"></script>
       <script src="${CHART_DATALABELS_SCRIPT_URL}"></script>
@@ -68,12 +82,23 @@ function previewDocument(html: string, fonts: unknown) {
   </html>`;
 }
 
-function useSlideFontAssets(fonts: unknown, enabled: boolean) {
+function useSlideFontAssets(
+  fonts: unknown,
+  enabled: boolean,
+  typography?: TypographyConfig | null,
+  scopeSelector?: string,
+) {
   useEffect(() => {
     if (!enabled) return;
-    const css = localFontOptionsFromUnknown(fonts)
-      .map(renderLocalFontFaceCss)
-      .join("");
+    const typographyCss = typographyStyleCss(typography);
+    const css = [
+      localFontOptionsFromUnknown(fonts).map(renderLocalFontFaceCss).join(""),
+      scopeSelector
+        ? scopeTypographyCss(typographyCss, scopeSelector)
+        : typographyCss,
+    ]
+      .filter(Boolean)
+      .join("\n");
     if (!css) return;
 
     const style = document.createElement("style");
@@ -81,18 +106,20 @@ function useSlideFontAssets(fonts: unknown, enabled: boolean) {
     style.textContent = css;
     document.head.appendChild(style);
     return () => style.remove();
-  }, [enabled, fonts]);
+  }, [enabled, fonts, typography, scopeSelector]);
 }
 
 function LinuxInPageSmartHtmlSlide({
   html,
   fonts,
+  typography,
   fixedSize,
   title,
   executeScripts,
 }: {
   html: string;
   fonts?: unknown;
+  typography?: TypographyConfig | null;
   fixedSize: boolean;
   title: string;
   executeScripts: boolean;
@@ -110,7 +137,12 @@ function LinuxInPageSmartHtmlSlide({
     setSanitizedHtml(DOMPurify.sanitize(html, SANITIZE_CONFIG));
   }, [html]);
 
-  useSlideFontAssets(fonts, executeScripts);
+  useSlideFontAssets(
+    fonts,
+    executeScripts,
+    typography,
+    `[data-smart-slide-instance="${instanceId}"]`,
+  );
   useSmartChartInjection({
     html: executeScripts && tailwindReady && sanitizedHtml ? html : "",
     instanceId,
@@ -160,17 +192,22 @@ function LinuxInPageSmartHtmlSlide({
 function IframeSmartHtmlSlide({
   html,
   fonts,
+  typography,
   fixedSize,
   title,
 }: {
   html: string;
   fonts?: unknown;
+  typography?: TypographyConfig | null;
   fixedSize: boolean;
   title: string;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(0);
-  const srcDoc = useMemo(() => previewDocument(html, fonts), [fonts, html]);
+  const srcDoc = useMemo(
+    () => previewDocument(html, fonts, typography),
+    [fonts, html, typography],
+  );
 
   useEffect(() => {
     if (fixedSize) return;
@@ -219,12 +256,14 @@ function IframeSmartHtmlSlide({
 export default function SmartHtmlSlide({
   html,
   fonts,
+  typography,
   fixedSize = false,
   title = "Smart presentation slide",
   executeScripts = true,
 }: {
   html: string;
   fonts?: unknown;
+  typography?: TypographyConfig | null;
   fixedSize?: boolean;
   title?: string;
   executeScripts?: boolean;
@@ -236,6 +275,7 @@ export default function SmartHtmlSlide({
         fonts={fonts}
         html={html}
         title={title}
+        typography={typography}
         executeScripts={executeScripts}
       />
     );
@@ -247,6 +287,7 @@ export default function SmartHtmlSlide({
       fonts={fonts}
       html={html}
       title={title}
+      typography={typography}
     />
   );
 }

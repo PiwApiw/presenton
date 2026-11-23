@@ -16,6 +16,11 @@ import {
   renderLocalFontFaceCss,
 } from "@/components/slide-editor/text/local-fonts";
 import {
+  scopeTypographyCss,
+  typographyStyleCss,
+  type TypographyConfig,
+} from "@/components/typography/effective";
+import {
   clearChatHtmlSelection,
   setChatHtmlSelection,
   updateSlideHtmlContent,
@@ -93,6 +98,7 @@ export default function SmartHtmlEditor({
   slide,
   renderIndex,
   fonts,
+  typography,
   title,
 }: {
   slide: {
@@ -102,6 +108,7 @@ export default function SmartHtmlEditor({
   };
   renderIndex?: number;
   fonts?: unknown;
+  typography?: TypographyConfig | null;
   title: string;
 }) {
   const dispatch = useDispatch();
@@ -490,9 +497,17 @@ export default function SmartHtmlEditor({
 
   useEffect(() => {
     if (!tailwindReady) return;
-    const css = localFontOptionsFromUnknown(fonts)
-      .map(renderLocalFontFaceCss)
-      .join("");
+    // Several smart slides can share this document (editor + thumbnails), so the
+    // role CSS is scoped to this editor's own instance.
+    const css = [
+      localFontOptionsFromUnknown(fonts).map(renderLocalFontFaceCss).join(""),
+      scopeTypographyCss(
+        typographyStyleCss(typography),
+        `[data-smart-slide-instance="${instanceId}"]`
+      ),
+    ]
+      .filter(Boolean)
+      .join("\n");
     if (!css) return;
 
     const style = document.createElement("style");
@@ -500,7 +515,7 @@ export default function SmartHtmlEditor({
     style.textContent = css;
     document.head.appendChild(style);
     return () => style.remove();
-  }, [fonts, tailwindReady]);
+  }, [fonts, instanceId, tailwindReady, typography]);
 
   useSmartChartInjection({
     html: tailwindReady ? html : "",
@@ -524,7 +539,15 @@ export default function SmartHtmlEditor({
   };
 
   if (!tailwindReady) {
-    return <SmartHtmlSlide fixedSize fonts={fonts} html={html} title={title} />;
+    return (
+      <SmartHtmlSlide
+        fixedSize
+        fonts={fonts}
+        html={html}
+        title={title}
+        typography={typography}
+      />
+    );
   }
 
   return (

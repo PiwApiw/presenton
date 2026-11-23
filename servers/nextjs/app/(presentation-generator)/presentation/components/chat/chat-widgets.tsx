@@ -1,6 +1,9 @@
 import { Loader2 } from "lucide-react";
 import Image from "next/image";
+import { useSelector } from "react-redux";
+import { resolveTypography } from "@/components/typography/effective";
 import { cn } from "@/lib/utils";
+import type { RootState } from "@/store/store";
 import SmartHtmlSlide from "../../../components/SmartHtmlSlide";
 import { TemplateV2HtmlSlidePreview } from "../../../components/TemplateV2HtmlSlidePreview";
 import { quickPromptGroups } from "./chat-prompts";
@@ -103,6 +106,13 @@ export const EditComparisonPreview = ({
   isApplying: boolean;
   onSelectVersion: (version: "original" | "modified") => void;
 }) => {
+  const presentationTypography = useSelector(
+    (state: RootState) =>
+      (state.presentationGeneration.presentationData as
+        | { typography?: unknown }
+        | null)?.typography ?? null
+  );
+
   if (!preview.modifiedSlides?.length) return null;
 
   const cards = [
@@ -125,6 +135,14 @@ export const EditComparisonPreview = ({
         : null;
     const previewClassName =
       "pointer-events-none overflow-hidden rounded-[2px] border border-[#EDEEEF] bg-white";
+    const slideTypography =
+      slide && typeof slide === "object"
+        ? ((slide as Record<string, unknown>).typography ?? null)
+        : null;
+    const effectiveTypography = resolveTypography(
+      presentationTypography as Parameters<typeof resolveTypography>[0],
+      slideTypography as Parameters<typeof resolveTypography>[1]
+    );
 
     if (typeof htmlContent === "string" && htmlContent.trim()) {
       return (
@@ -133,6 +151,7 @@ export const EditComparisonPreview = ({
             html={htmlContent}
             fonts={fonts}
             title={`${label} slide preview ${index + 1}`}
+            typography={effectiveTypography}
           />
         </div>
       );

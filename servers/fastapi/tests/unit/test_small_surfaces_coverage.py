@@ -410,6 +410,7 @@ def test_dynamic_outline_and_structure_factories_validate():
         (None, "eng"),
         ("   ", "eng"),
         ("Hausa (Hausa)", "hau"),
+        ("Indonesian (Bahasa Indonesia)", "ind"),
     ],
 )
 def test_presentation_language_to_ocr_resolution(language: str | None, code: str):

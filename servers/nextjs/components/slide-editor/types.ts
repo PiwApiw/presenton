@@ -342,6 +342,8 @@ export type Font = {
   letter_spacing?: number | null;
   ellipsis?: boolean | null;
   opacity?: number | null;
+  /** Set when a user edits this element directly; role typography must not override it. */
+  manual?: boolean | null;
 };
 
 export type Fill = {

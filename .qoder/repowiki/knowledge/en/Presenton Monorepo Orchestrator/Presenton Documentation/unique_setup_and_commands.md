@@ -1,0 +1,1 @@
+No setup required for reading docs. The macOS developer guides assume commands run from the `electron/` directory and rely on npm scripts `npm run dev`, `npm run build:all`, `npm run build:all:mac:signed`, `npm run build:all:mas-dev`, and `npm run build:all:mas`.

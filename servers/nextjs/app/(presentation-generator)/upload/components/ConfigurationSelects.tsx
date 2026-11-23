@@ -5,6 +5,7 @@ import {
   Check,
   ChevronUp,
   Languages,
+  Type,
 } from "lucide-react";
 import {
   Command,
@@ -22,6 +23,8 @@ import {
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import AdvanceSettings from "./AdvanceSettings";
+import TypographyEditor from "../../typography/components/TypographyEditor";
+import { TypographyService } from "../../services/api/typography";
 import {
   clampSlideCountValue,
   MAX_NUMBER_OF_SLIDES,
@@ -363,6 +366,7 @@ export function ConfigurationSelects({
 }: ConfigurationSelectsProps) {
   const [openSlides, setOpenSlides] = useState(false);
   const [openLanguage, setOpenLanguage] = useState(false);
+  const [openTypography, setOpenTypography] = useState(false);
   const [modeDialogOpen, setModeDialogOpen] = useState(false);
   const showMode = Boolean(mode && onModeChange);
 
@@ -401,6 +405,50 @@ export function ConfigurationSelects({
         onOpenChange={setOpenLanguage}
         compact={compact}
       />
+      <Popover open={openTypography} onOpenChange={setOpenTypography}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            name="typography"
+            data-testid="typography-select"
+            aria-expanded={openTypography}
+            aria-controls="typography-options"
+            className={cn(
+              "flex h-[34px] items-center gap-2 overflow-hidden rounded-full bg-white px-3.5 font-syne font-semibold text-[#191919]",
+              compact
+                ? "border border-[#EDEEEF] shadow-none focus-visible:ring-2 focus-visible:ring-[#5146E5]/25"
+                : "shadow-sm ring-1 ring-inset ring-slate-200 min-[1800px]:h-10 min-[1800px]:px-4 min-[2200px]:h-11 min-[2200px]:px-5",
+            )}
+          >
+            <Type aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+            <span
+              className={cn(
+                "truncate",
+                compact
+                  ? "text-sm font-medium tracking-[-0.14px]"
+                  : "text-xs font-medium min-[1800px]:text-sm min-[2200px]:text-base",
+              )}
+            >
+              Tipografi
+            </span>
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          id="typography-options"
+          className="w-[420px] p-4 font-manrope"
+          align="end"
+        >
+          <TypographyEditor
+            scope="presentation"
+            value={config.typography}
+            onChange={(typography) => onConfigChange("typography", typography)}
+            resolveGoogleFont={TypographyService.resolveGoogleFont}
+            onFontResolved={(family, url) =>
+              onConfigChange("fonts", { ...config.fonts, [family]: url })
+            }
+          />
+        </PopoverContent>
+      </Popover>
       <AdvanceSettings
         config={config}
         onConfigChange={onConfigChange}

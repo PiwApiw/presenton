@@ -1,0 +1,5 @@
+- Each script exposes both a CLI entry point and an exported function for programmatic/test use, guarded by `process.argv[1]` / `import.meta.url` equality or `require.main === module`.
+- CLI argument parsing is hand-rolled per script with a `usage()` string and explicit `--help`/`-h` handling rather than a third-party parser.
+- Errors thrown during template conversion and asset resolution carry descriptive messages used verbatim in stderr output and test assertions.
+- Configuration keys are enumerated in a single constant array/set (`TOP_LEVEL_KEYS`, `USER_CONFIG_ENV_KEYS`, `VALID_LLM_PROVIDERS`) and validated against them before being accepted.
+- Tests live as sibling `.test.mjs` files colocated with their source script and exercise the exported functions rather than invoking the CLI.

@@ -23,6 +23,7 @@ from llmai.shared import (
 )
 
 from constants.presentation import MAX_NUMBER_OF_SLIDES
+from utils.llm_calls.typography_prompt import build_typography_prompt
 from utils.llm_client_error_handler import handle_llm_client_exceptions
 from utils.llm_config import (
     disable_thinking,
@@ -318,6 +319,7 @@ def get_smart_messages(
     source_context: str,
     community_design_context: str,
     fonts: Optional[dict[str, str]] = None,
+    typography: object | None = None,
     completed_slides: Optional[Sequence[dict[str, str]]] = None,
     retry_error: Optional[str] = None,
 ) -> list[Message]:
@@ -343,6 +345,7 @@ def get_smart_messages(
         if community_design_context.strip()
         else ""
     )
+    typography_block = build_typography_prompt(typography)
     user_prompt = (
         f"""
 {"Continue the presentation in one response." if completed_slides else "Generate the complete presentation in one response."}
@@ -362,6 +365,7 @@ Include a visible table-of-contents slide: {include_table_of_contents}
 {_continuation_prompt(completed_slides, retry_error)}
 """
         + SMART_DIRECT_HTML_PROMPT
+        + typography_block
         + f"""
 
 Source context:
@@ -743,6 +747,7 @@ async def generate_smart_presentation(
     source_context: str = "",
     community_design_context: str = "",
     fonts: Optional[dict[str, str]] = None,
+    typography: object | None = None,
     existing_slides: Optional[Sequence[dict[str, str]]] = None,
     existing_title: Optional[str] = None,
     on_slide: SmartSlideCallback | None = None,
@@ -802,6 +807,7 @@ async def generate_smart_presentation(
             source_context=source_context,
             community_design_context=community_design_context,
             fonts=fonts,
+            typography=typography,
             completed_slides=accepted_slides,
             retry_error=retry_error,
         )

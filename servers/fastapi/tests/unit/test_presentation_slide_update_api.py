@@ -120,3 +120,52 @@ def test_slide_update_rejects_presentation_mismatch():
 
     assert exc_info.value.status_code == 400
     assert session.commit_count == 0
+
+
+def test_slide_update_backfills_role_markers_when_slide_typography_is_set():
+    stored = _slide()
+    stored.html_content = (
+        "<section data-slide-type='content'><h1>Judul</h1></section>"
+    )
+    incoming = _slide(slide_id=stored.id, presentation_id=stored.presentation)
+    incoming.html_content = stored.html_content
+    incoming.typography = {"version": 1, "roles": {"title": {"size": 52}}}
+    session = FakeAsyncSession(get_results={stored.id: stored})
+
+    asyncio.run(update_presentation_slide(slide=incoming, sql_session=session))
+
+    assert 'data-text-role="title"' in stored.html_content
+    assert stored.properties["typography_roles_version"] == 1
+
+
+def test_slide_update_leaves_html_untouched_when_typography_is_auto():
+    stored = _slide()
+    stored.html_content = (
+        "<section data-slide-type='content'><h1>Judul</h1></section>"
+    )
+    original = stored.html_content
+    incoming = _slide(slide_id=stored.id, presentation_id=stored.presentation)
+    incoming.html_content = original
+    incoming.typography = {"version": 1, "roles": {"title": {"size": None}}}
+    session = FakeAsyncSession(get_results={stored.id: stored})
+
+    asyncio.run(update_presentation_slide(slide=incoming, sql_session=session))
+
+    assert stored.html_content == original
+    assert stored.properties == {"accent": "blue"}
+
+
+def test_slide_update_rejects_out_of_range_typography():
+    stored = _slide()
+    incoming = _slide(slide_id=stored.id, presentation_id=stored.presentation)
+    incoming.typography = {"version": 1, "roles": {"title": {"size": 9999}}}
+    session = FakeAsyncSession(get_results={stored.id: stored})
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            update_presentation_slide(slide=incoming, sql_session=session)
+        )
+
+    assert exc_info.value.status_code == 422
+    assert session.commit_count == 0
+    assert stored.typography is None

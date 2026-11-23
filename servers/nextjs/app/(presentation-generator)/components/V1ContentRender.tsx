@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useMemo, useState, type FormEvent } from "react";
+import { useSelector } from "react-redux";
 import SlideErrorBoundary from "../components/SlideErrorBoundary";
 
 import { ArrowUp, PenLine } from "lucide-react";
@@ -8,6 +9,10 @@ import {
     type TemplateV2Layout,
 } from "@/components/slide-editor/importing/template-v2-import";
 import { TemplateV2KonvaSlide } from "@/components/slide-editor/surface/TemplateV2KonvaSlide";
+import {
+    resolveTypography,
+} from "@/components/typography/effective";
+import type { RootState } from "@/store/store";
 import { TemplateV2HtmlSlidePreview } from "./TemplateV2HtmlSlidePreview";
 import {
     BLANK_TEMPLATE_V2_LAYOUT,
@@ -208,23 +213,35 @@ export const V1ContentRender = ({
             : null;
     }, [isTemplateV2Slide, safeSlide.ui]);
 
+    const presentationTypography = useSelector(
+        (state: RootState) =>
+            (state.presentationGeneration.presentationData as
+                | { typography?: unknown }
+                | null)?.typography ?? null
+    );
 
+    const typographyConfig = useMemo(
+        () =>
+            resolveTypography(
+                presentationTypography as Parameters<typeof resolveTypography>[0],
+                (safeSlide.typography ?? null) as Parameters<typeof resolveTypography>[1]
+            ),
+        [presentationTypography, safeSlide.typography]
+    );
 
-    if (isBlankSlide) {
-        if (!isTemplateV2Slide) {
-            return <div className="h-full w-full bg-white" />;
-        }
+    const baseLayout =
+        templateV2Layout ?? (isBlankSlide ? BLANK_TEMPLATE_V2_LAYOUT : null);
+
+    if (isBlankSlide && !isTemplateV2Slide) {
+        return <div className="h-full w-full bg-white" />;
     }
-
-    const directLayout = templateV2Layout ??
-        (isBlankSlide ? BLANK_TEMPLATE_V2_LAYOUT : null);
-
 
     return (
         <SlideErrorBoundary label={`Slide ${(safeSlide.index ?? 0) + 1}`}>
             <div className="relative h-full w-full">
                 <TemplateV2KonvaSlide
-                    layout={directLayout ?? BLANK_TEMPLATE_V2_LAYOUT}
+                    layout={baseLayout ?? BLANK_TEMPLATE_V2_LAYOUT}
+                    typography={typographyConfig}
                     isEditMode={isEditMode}
                     slideId={safeSlide.id ?? null}
                     presentationId={presentationId}
@@ -239,7 +256,7 @@ export const V1ContentRender = ({
                     ((showBlankPromptOverlay && isBlankSlide) ||
                         (showTemplatePromptOverlay && !isBlankSlide)) ? (
                     <TemplateV2PromptOverlay
-                        layout={directLayout ?? BLANK_TEMPLATE_V2_LAYOUT}
+                        layout={baseLayout ?? BLANK_TEMPLATE_V2_LAYOUT}
                         slideIndex={safeSlide.index ?? 0}
                         showLayoutPreview={!isBlankSlide}
                         onDismiss={

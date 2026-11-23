@@ -1,0 +1,1283 @@
+﻿## Fix round 1 - tracked modified files (diff vs HEAD)
+diff --git a/servers/fastapi/api/v1/ppt/endpoints/presentation.py b/servers/fastapi/api/v1/ppt/endpoints/presentation.py
+index 0207bc56..d75b72ce 100644
+--- a/servers/fastapi/api/v1/ppt/endpoints/presentation.py
++++ b/servers/fastapi/api/v1/ppt/endpoints/presentation.py
+@@ -12,21 +12,21 @@ from fastapi import (
+     APIRouter,
+     BackgroundTasks,
+     Body,
+     Depends,
+     HTTPException,
+     Path,
+     Query,
+     Request,
+ )
+ from fastapi.responses import StreamingResponse
+-from pydantic import BaseModel
++from pydantic import BaseModel, ValidationError
+ from sqlalchemy import delete
+ from sqlalchemy.ext.asyncio import AsyncSession
+ from sqlmodel import select
+ from constants.presentation import MAX_NUMBER_OF_SLIDES
+ from enums.async_task_status import AsyncTaskStatus
+ from enums.webhook_event import WebhookEvent
+ from models.api_error_model import APIErrorModel
+ from models.generate_presentation_request import GeneratePresentationRequest
+ from models.presentation_and_path import PresentationPathAndEditPath
+ from models.presentation_from_template import EditPresentationRequest
+@@ -36,20 +36,32 @@ from models.presentation_outline_model import (
+ )
+ from enums.tone import Tone
+ from enums.verbosity import Verbosity
+ from models.presentation_structure_model import PresentationStructureModel
+ from models.presentation_with_slides import (
+     PresentationWithSlides,
+ )
+ from services.documents_loader import DocumentsLoader
+ from services.chat.slide_ui_helpers import _normalize_generated_image_fit
+ from services.temp_file_service import TEMP_FILE_SERVICE
++from models.typography import (
++    TypographyConfig,
++    UpdateTypographyRequest,
++    is_auto,
++    parse_typography,
++)
++from services.smart_typography_roles import ensure_role_markers
++from services.typography_service import (
++    apply_role_markers_to_presentation,
++    ensure_fonts_resolved,
++    merge_font_urls,
++)
+ from services.webhook_service import WebhookService
+ from services.image_generation_service import ImageGenerationService
+ from services.mem0_presentation_memory_service import (
+     MEM0_PRESENTATION_MEMORY_SERVICE,
+ )
+ from utils.dict_utils import deep_update
+ from utils.export_utils import export_presentation
+ from utils.mcp_public_urls import absolute_mcp_result_links
+ from utils.llm_calls.generate_presentation_outlines import (
+     generate_ppt_outline,
+@@ -1562,20 +1574,43 @@ async def delete_presentation(
+     id: uuid.UUID, sql_session: AsyncSession = Depends(get_async_session)
+ ):
+     presentation = await sql_session.get(PresentationModel, id)
+     if not presentation:
+         raise HTTPException(404, "Presentation not found")
+ 
+     await sql_session.delete(presentation)
+     await sql_session.commit()
+ 
+ 
++@PRESENTATION_ROUTER.patch("/{id}/typography", response_model=PresentationModel)
++async def update_presentation_typography(
++    id: uuid.UUID,
++    payload: UpdateTypographyRequest,
++    sql_session: AsyncSession = Depends(get_async_session),
++):
++    presentation = await sql_session.get(PresentationModel, id)
++    if not presentation:
++        raise HTTPException(404, "Presentation not found")
++
++    merged_fonts = merge_font_urls(presentation.fonts, payload.fonts)
++    if "typography" in payload.model_fields_set:
++        config = ensure_fonts_resolved(payload.typography, merged_fonts)
++        presentation.typography = config.model_dump() if config else None
++    presentation.fonts = merged_fonts
++    await sql_session.commit()
++    await sql_session.refresh(presentation)
++
++    if presentation.typography is not None and not is_auto(presentation.typography):
++        await apply_role_markers_to_presentation(sql_session, presentation.id)
++    return presentation
++
++
+ @PRESENTATION_ROUTER.post("/{id}/duplicate", response_model=PresentationWithSlides)
+ async def duplicate_presentation(
+     id: uuid.UUID, sql_session: AsyncSession = Depends(get_async_session)
+ ):
+     presentation = await sql_session.get(PresentationModel, id)
+     if not presentation:
+         raise HTTPException(404, "Presentation not found")
+ 
+     slides = list(
+         await sql_session.scalars(
+@@ -1646,20 +1681,22 @@ async def create_presentation(
+     language: Annotated[Optional[str], Body()] = None,
+     file_paths: Annotated[Optional[List[str]], Body()] = None,
+     tone: Annotated[Tone, Body()] = Tone.DEFAULT,
+     verbosity: Annotated[Verbosity, Body()] = Verbosity.STANDARD,
+     instructions: Annotated[Optional[str], Body()] = None,
+     include_table_of_contents: Annotated[bool, Body()] = False,
+     include_title_slide: Annotated[bool, Body()] = True,
+     web_search: Annotated[bool, Body()] = False,
+     generation_mode: Annotated[Literal["standard", "smart"], Body()] = "standard",
+     community_design_ids: Annotated[Optional[List[int]], Body()] = None,
++    typography: Annotated[Optional[TypographyConfig], Body()] = None,
++    fonts: Annotated[Optional[dict[str, str]], Body()] = None,
+     sql_session: AsyncSession = Depends(get_async_session),
+ ):
+ 
+     if n_slides is not None and n_slides < 1:
+         raise HTTPException(
+             status_code=400,
+             detail="Number of slides must be greater than 0",
+         )
+ 
+     if n_slides is not None and n_slides > MAX_NUMBER_OF_SLIDES:
+@@ -1696,35 +1733,42 @@ async def create_presentation(
+     presentation_id = uuid.uuid4()
+     language_to_store = (language or "").strip()
+     validated_file_paths = (
+         TEMP_FILE_SERVICE.resolve_existing_temp_paths(file_paths)
+         if file_paths
+         else None
+     )
+     # DB schema stores an int; 0 is used as internal marker for auto slide count.
+     n_slides_to_store = n_slides if n_slides is not None else 0
+ 
++    merged_fonts = merge_font_urls(None, fonts)
++    normalized_typography = ensure_fonts_resolved(typography, merged_fonts)
++
+     presentation = PresentationModel(
+         id=presentation_id,
+         version=PresentationVersion.V2_STANDARD,
+         content=content,
+         n_slides=n_slides_to_store,
+         language=language_to_store,
+         file_paths=validated_file_paths,
+         tone=tone.value,
+         verbosity=verbosity.value,
+         instructions=instructions,
+         include_table_of_contents=include_table_of_contents,
+         include_title_slide=include_title_slide,
+         web_search=web_search,
+         generation_mode=generation_mode,
+         community_design_ids=normalized_community_ids or None,
++        fonts=merged_fonts,
++        typography=(
++            normalized_typography.model_dump() if normalized_typography else None
++        ),
+     )
+ 
+     sql_session.add(presentation)
+     await sql_session.commit()
+ 
+     search_route, actual_search_provider = get_web_search_route()
+     logger.info(
+         "Created presentation: id=%s web_search_enabled=%s selected_web_search_provider=%s "
+         "web_search_route=%s actual_web_search_provider=%s",
+         presentation_id,
+@@ -2092,20 +2136,21 @@ async def stream_smart_presentation(
+                 n_slides=slide_count,
+                 language=presentation.language,
+                 tone=presentation.tone,
+                 verbosity=presentation.verbosity,
+                 instructions=presentation.instructions,
+                 include_title_slide=presentation.include_title_slide,
+                 include_table_of_contents=presentation.include_table_of_contents,
+                 source_context=source_context,
+                 community_design_context=community_context,
+                 fonts=presentation.fonts,
++                typography=presentation.typography,
+                 existing_slides=[
+                     {"html": slide.html_content or ""} for slide in existing_slides
+                 ],
+                 existing_title=presentation.title,
+                 on_slide=emit_slide,
+                 on_metrics=emit_metrics,
+                 on_retry=emit_retry,
+             )
+         )
+ 
+@@ -2185,20 +2230,35 @@ async def stream_smart_presentation(
+             sql_session.add(recovered_slide)
+             slides_by_index[index] = recovered_slide
+         slides = [slides_by_index[index] for index in range(slide_count)]
+ 
+         final_presentation.title = final_title
+         final_presentation.n_slides = slide_count
+         final_presentation.fonts = final_fonts
+         sql_session.add(final_presentation)
+         await sql_session.commit()
+ 
++        # Smart slide HTML carries no role markers from older prompts, so add
++        # them here and reload the rows: the commit inside the backfill expires
++        # this session's instances.
++        if final_presentation.typography is not None and not is_auto(
++            final_presentation.typography
++        ):
++            await apply_role_markers_to_presentation(sql_session, presentation_id)
++            slides = list(
++                await sql_session.scalars(
++                    select(SlideModel)
++                    .where(SlideModel.presentation == presentation_id)
++                    .order_by(SlideModel.index)
++                )
++            )
++
+         response = PresentationWithSlides(
+             **_presentation_response_data(final_presentation),
+             slides=slides,
+         )
+         yield SSECompleteResponse(
+             key="presentation",
+             value=response.model_dump(mode="json"),
+         ).to_string()
+ 
+     async def rollback_stream_session():
+@@ -2560,25 +2620,49 @@ async def update_presentation_slide(
+     stored_slide = await sql_session.get(SlideModel, slide_id)
+     if not stored_slide:
+         raise HTTPException(status_code=404, detail="Slide not found")
+ 
+     if stored_slide.presentation != presentation_id:
+         raise HTTPException(
+             status_code=400,
+             detail="Slide does not belong to the supplied presentation",
+         )
+ 
++    if "typography" in slide.model_fields_set and slide.typography is not None:
++        try:
++            slide.typography = parse_typography(slide.typography).model_dump()
++        except ValidationError as exc:
++            raise HTTPException(
++                status_code=422,
++                detail={
++                    "message": "Invalid typography configuration",
++                    "errors": exc.errors(include_url=False),
++                },
++            ) from exc
++
+     stored_slide.sqlmodel_update(
+         slide.model_dump(
+             exclude={"id", "presentation", "index"},
+         )
+     )
++    if (
++        stored_slide.html_content
++        and stored_slide.typography
++        and not is_auto(stored_slide.typography)
++    ):
++        properties = dict(stored_slide.properties or {})
++        if properties.get("typography_roles_version") != 1:
++            updated_html, changed = ensure_role_markers(stored_slide.html_content)
++            if changed:
++                stored_slide.html_content = updated_html
++            properties["typography_roles_version"] = 1
++            stored_slide.properties = properties
+     sql_session.add(stored_slide)
+     await sql_session.commit()
+     await sql_session.refresh(stored_slide)
+     return stored_slide
+ 
+ 
+ async def check_if_api_request_is_valid(
+     request: GeneratePresentationRequest,
+     sql_session: AsyncSession = Depends(get_async_session),
+ ) -> Tuple[uuid.UUID,]:
+diff --git a/servers/fastapi/tests/unit/test_presentation_slide_update_api.py b/servers/fastapi/tests/unit/test_presentation_slide_update_api.py
+index c369aab4..8ad85aee 100644
+--- a/servers/fastapi/tests/unit/test_presentation_slide_update_api.py
++++ b/servers/fastapi/tests/unit/test_presentation_slide_update_api.py
+@@ -113,10 +113,59 @@ def test_slide_update_rejects_presentation_mismatch():
+     incoming = _slide(slide_id=stored.id, presentation_id=uuid.uuid4())
+     session = FakeAsyncSession(get_results={stored.id: stored})
+ 
+     with pytest.raises(HTTPException) as exc_info:
+         asyncio.run(
+             update_presentation_slide(slide=incoming, sql_session=session)
+         )
+ 
+     assert exc_info.value.status_code == 400
+     assert session.commit_count == 0
++
++
++def test_slide_update_backfills_role_markers_when_slide_typography_is_set():
++    stored = _slide()
++    stored.html_content = (
++        "<section data-slide-type='content'><h1>Judul</h1></section>"
++    )
++    incoming = _slide(slide_id=stored.id, presentation_id=stored.presentation)
++    incoming.html_content = stored.html_content
++    incoming.typography = {"version": 1, "roles": {"title": {"size": 52}}}
++    session = FakeAsyncSession(get_results={stored.id: stored})
++
++    asyncio.run(update_presentation_slide(slide=incoming, sql_session=session))
++
++    assert 'data-text-role="title"' in stored.html_content
++    assert stored.properties["typography_roles_version"] == 1
++
++
++def test_slide_update_leaves_html_untouched_when_typography_is_auto():
++    stored = _slide()
++    stored.html_content = (
++        "<section data-slide-type='content'><h1>Judul</h1></section>"
++    )
++    original = stored.html_content
++    incoming = _slide(slide_id=stored.id, presentation_id=stored.presentation)
++    incoming.html_content = original
++    incoming.typography = {"version": 1, "roles": {"title": {"size": None}}}
++    session = FakeAsyncSession(get_results={stored.id: stored})
++
++    asyncio.run(update_presentation_slide(slide=incoming, sql_session=session))
++
++    assert stored.html_content == original
++    assert stored.properties == {"accent": "blue"}
++
++
++def test_slide_update_rejects_out_of_range_typography():
++    stored = _slide()
++    incoming = _slide(slide_id=stored.id, presentation_id=stored.presentation)
++    incoming.typography = {"version": 1, "roles": {"title": {"size": 9999}}}
++    session = FakeAsyncSession(get_results={stored.id: stored})
++
++    with pytest.raises(HTTPException) as exc_info:
++        asyncio.run(
++            update_presentation_slide(slide=incoming, sql_session=session)
++        )
++
++    assert exc_info.value.status_code == 422
++    assert session.commit_count == 0
++    assert stored.typography is None
+diff --git a/servers/nextjs/app/(export)/pdf-maker/PdfMakerPage.tsx b/servers/nextjs/app/(export)/pdf-maker/PdfMakerPage.tsx
+index b00ec522..9b95843b 100644
+--- a/servers/nextjs/app/(export)/pdf-maker/PdfMakerPage.tsx
++++ b/servers/nextjs/app/(export)/pdf-maker/PdfMakerPage.tsx
+@@ -15,20 +15,40 @@ import { ApiResponseHandler } from "@/app/(presentation-generator)/services/api/
+ import { useFontLoader } from "@/app/(presentation-generator)/hooks/useFontLoad";
+ import { applyPresentationThemeToElement } from "@/app/(presentation-generator)/presentation/utils/applyPresentationThemeDom";
+ import SlideScale from "@/app/(presentation-generator)/components/PresentationRender";
+ import {
+   shouldRenderTemplateV2HtmlPreview,
+   TemplateV2HtmlSlidePreview,
+ } from "@/app/(presentation-generator)/components/TemplateV2HtmlSlidePreview";
+ import { normalizeBackendAssetUrls } from "@/utils/api";
+ import { ensureTailwindBrowserScript } from "@/lib/tailwind-browser";
+ import { useSmartChartInjection } from "@/app/(presentation-generator)/components/useSmartChartInjection";
++import {
++  isAutoTypography,
++  resolveTypography,
++  typographyStyleCss,
++} from "@/components/typography/effective";
++import { applyTypographyToSlide } from "@/components/typography/apply-to-slide";
++
++/** Prefix every rule of a role stylesheet with the slide's container id. */
++function scopeTypographyCss(css: string, scopeId: string) {
++  if (!css) return "";
++  return css
++    .split("\n")
++    .map((rule) => {
++      const brace = rule.indexOf("{");
++      if (brace < 0) return "";
++      return `#${scopeId} ${rule.slice(0, brace)}{${rule.slice(brace + 1)}`;
++    })
++    .filter(Boolean)
++    .join("\n");
++}
+ 
+ const PDF_PRINT_STYLE = `
+   html,
+   body {
+     margin: 0 !important;
+     padding: 0 !important;
+   }
+ 
+   #presentation-slides-wrapper {
+     height: auto !important;
+@@ -100,40 +120,43 @@ const PDF_PRINT_STYLE = `
+ `;
+ 
+ type PresentationPageProps = {
+   presentation_id: string;
+   exportCookie?: string;
+ };
+ 
+ const SmartHtmlPdfSlide = ({
+   slide,
+   index,
++  typographyCss,
+ }: {
+   slide: { id?: string | null; index?: number; html_content?: string | null };
+   index: number;
++  typographyCss?: string;
+ }) => {
+   const containerRef = useRef<HTMLDivElement | null>(null);
+   const html = slide.html_content?.trim() ?? "";
+   const instanceId = useMemo(
+     () => `pdf-smart-${slide.id ?? index}`,
+     [index, slide.id]
+   );
+ 
+   useSmartChartInjection({
+     html,
+     instanceId,
+     domRevision: `${slide.index ?? "none"}:${index}`,
+     containerRef,
+   });
+ 
+   return (
+     <div className="smart-slide-export-root h-[720px] w-[1280px] overflow-hidden bg-white">
++      {typographyCss ? <style>{typographyCss}</style> : null}
+       <div className="smart-slide-export-content h-[720px] w-[1280px] overflow-hidden bg-white">
+         <div
+           ref={containerRef}
+           data-smart-slide-instance={instanceId}
+           data-tailwind-runtime-scope
+           className="h-[720px] w-[1280px] overflow-hidden bg-white"
+           dangerouslySetInnerHTML={{ __html: html }}
+         />
+       </div>
+     </div>
+@@ -269,42 +292,72 @@ const PresentationPage = ({ presentation_id, exportCookie }: PresentationPagePro
+                   ))}
+                 </div>
+               </div>
+             ) : (
+               slides.map((slide: any, index: number) => {
+                 const useTemplateV2HtmlPreview =
+                   shouldRenderTemplateV2HtmlPreview(
+                     slide,
+                     presentationData?.version
+                   );
++                const slideDomId = `slide-${slide.index}`;
++                const resolvedTypography = resolveTypography(
++                  presentationData?.typography ?? null,
++                  slide?.typography ?? null
++                );
++                const hasTypography = !isAutoTypography(resolvedTypography);
++                // Exported markup is a single document, so every slide's role CSS
++                // is scoped to that slide's container.
++                const typographyCss = hasTypography
++                  ? scopeTypographyCss(
++                      typographyStyleCss(resolvedTypography),
++                      slideDomId
++                    )
++                  : "";
++                const exportSlide =
++                  hasTypography &&
++                  typeof slide?.ui === "object" &&
++                  slide.ui !== null
++                    ? {
++                        ...slide,
++                        ui: applyTypographyToSlide(
++                          slide.ui,
++                          resolvedTypography
++                        ),
++                      }
++                    : slide;
+ 
+                 return (
+                   <div
+                     key={`${slide.type}-${index}-${slide.index}`}
+-                    id={`slide-${slide.index}`}
++                    id={slideDomId}
+                     className="main-slide relative flex items-center justify-center"
+                     data-speaker-note={slide.speaker_note ?? ""}
+                   >
+                     <div
+                       className="slide-export-inner group font-syne"
+                       data-layout={slide.layout}
+                       data-group={slide.layout_group}
+                     >
+                       {useTemplateV2HtmlPreview ? (
+                         <TemplateV2HtmlSlidePreview
+-                          slide={slide}
++                          slide={exportSlide}
+                           fonts={presentationData?.fonts}
+                           fixedSize
+                         />
+                       ) : typeof slide?.html_content === "string" &&
+                         slide.html_content.trim() ? (
+-                        <SmartHtmlPdfSlide slide={slide} index={index} />
++                        <SmartHtmlPdfSlide
++                          slide={slide}
++                          index={index}
++                          typographyCss={typographyCss}
++                        />
+                       ) : (
+                         <SlideScale
+                           slide={slide}
+                           theme={presentationData?.theme ?? null}
+                           isEditMode={false}
+                           fixedSize
+                         />
+                       )}
+                     </div>
+                   </div>
+diff --git a/servers/nextjs/app/(presentation-generator)/(dashboard)/dashboard/components/PresentationCard.tsx b/servers/nextjs/app/(presentation-generator)/(dashboard)/dashboard/components/PresentationCard.tsx
+index ca59a5a9..b66c7bc4 100644
+--- a/servers/nextjs/app/(presentation-generator)/(dashboard)/dashboard/components/PresentationCard.tsx
++++ b/servers/nextjs/app/(presentation-generator)/(dashboard)/dashboard/components/PresentationCard.tsx
+@@ -19,20 +19,25 @@ import {
+   DialogHeader,
+   DialogTitle,
+ } from "@/components/ui/dialog";
+ 
+ import SlideScale from "@/app/(presentation-generator)/components/PresentationRender";
+ import {
+   shouldRenderTemplateV2HtmlPreview,
+   TemplateV2HtmlSlidePreview,
+ } from "@/app/(presentation-generator)/components/TemplateV2HtmlSlidePreview";
+ import MarkdownRenderer from "@/components/MarkDownRender";
++import {
++  isAutoTypography,
++  resolveTypography,
++} from "@/components/typography/effective";
++import { applyTypographyToSlide } from "@/components/typography/apply-to-slide";
+ import { trackEvent, MixpanelEvent } from "@/utils/mixpanel";
+ 
+ export const PresentationCard = ({
+   id,
+   title,
+   presentation,
+   viewMode = "grid",
+   onDeleted,
+   onDuplicated
+ }: {
+@@ -113,20 +118,33 @@ export const PresentationCard = ({
+     } catch (error) {
+       notify.error(
+         "Could not duplicate presentation",
+         error instanceof Error ? error.message : "Something went wrong while duplicating the presentation."
+       );
+     } finally {
+       setIsDuplicating(false);
+     }
+   };
+   const firstSlide = presentation?.slides?.[0];
++  // Resolve from this deck's own data: the editor store may still hold another
++  // presentation's typography.
++  const cardTypography = resolveTypography(
++    presentation?.typography ?? null,
++    firstSlide?.typography ?? null
++  );
++  const cardSlide =
++    firstSlide && !isAutoTypography(cardTypography)
++      ? {
++          ...firstSlide,
++          ui: applyTypographyToSlide(firstSlide.ui, cardTypography),
++        }
++      : firstSlide;
+   const useTemplateV2HtmlPreview = shouldRenderTemplateV2HtmlPreview(
+     firstSlide,
+     presentation?.version
+   );
+   return (
+     <>
+       <Card
+         suppressHydrationWarning={true}
+         onClick={handlePreview}
+         aria-disabled={isUnsupported}
+@@ -156,27 +174,28 @@ export const PresentationCard = ({
+ 
+           {isUnsupported ? (
+             <div className="flex flex-col items-center gap-2 px-5 text-center text-[#666666]">
+               <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#F4F3FF] text-[#7A5AF8]">
+                 <Archive className="h-[18px] w-[18px]" aria-hidden="true" />
+               </span>
+               <p className="text-xs font-medium">Preview unavailable</p>
+             </div>
+           ) : useTemplateV2HtmlPreview ? (
+             <TemplateV2HtmlSlidePreview
+-              slide={firstSlide}
++              slide={cardSlide}
+               fonts={presentation.fonts}
+             />
+           ) : (
+             <SlideScale
+-              slide={firstSlide}
++              slide={cardSlide}
+               fonts={presentation.fonts}
++              typography={cardTypography}
+               isClickable={false}
+               presentationLayout={presentation.layout}
+             />
+           )}
+         </div>
+         <p
+           className={`absolute left-2 top-2 z-40 rounded-full px-2.5 py-1 text-[11px] font-semibold capitalize shadow-sm backdrop-blur-sm ${
+             presentationType === "smart"
+               ? "bg-[#F4F0FF]/95 text-[#6941C6]"
+               : "bg-white/90 text-[#475467]"
+diff --git a/servers/nextjs/app/(presentation-generator)/components/PresentationRender.tsx b/servers/nextjs/app/(presentation-generator)/components/PresentationRender.tsx
+index a9a42543..dee7ad7c 100644
+--- a/servers/nextjs/app/(presentation-generator)/components/PresentationRender.tsx
++++ b/servers/nextjs/app/(presentation-generator)/components/PresentationRender.tsx
+@@ -1,64 +1,89 @@
+ import React, { useEffect, useMemo, useRef, useState } from "react";
++import { useSelector } from "react-redux";
+ 
++import { resolveTypography } from "@/components/typography/effective";
++import type { TypographyConfig } from "@/components/typography/effective";
++import type { RootState } from "@/store/store";
+ import { V1ContentRender } from "../../(presentation-generator)/components/V1ContentRender";
+ import SmartHtmlEditor from "./SmartHtmlEditor";
+ import SmartHtmlSlide from "./SmartHtmlSlide";
+ 
+ const BASE_WIDTH = 1280;
+ const BASE_HEIGHT = 720;
+ 
+ const SlideScale = ({
+   slide,
+   presentationId,
+   theme,
+   fonts,
+   isEditMode = true,
+ 
++  /** Presentation-level typography. Falls back to the store when omitted. */
++  typography,
++
+   /** Fill viewport; scale may exceed 1 so slides appear larger in present mode */
+   presentMode = false,
+   isClickable = true,
+   fixedSize = false,
+   fitToContainer = false,
+   presentationLayout,
+   renderIndex,
+   enableViewportCulling = false,
+   isSelected = false,
+   showEditScan = false,
+   showBlankPromptOverlay = false,
+   onBlankPromptOverlayDismiss,
+   showTemplatePromptOverlay = false,
+   onTemplatePromptOverlayDismiss,
+ }: {
+   slide: any;
+   presentationId?: string;
+   theme?: any;
+   fonts?: unknown;
+   isEditMode?: boolean;
++  typography?: TypographyConfig | null;
+ 
+   presentMode?: boolean;
+   isClickable?: boolean;
+   fixedSize?: boolean;
+   fitToContainer?: boolean;
+   presentationLayout?: unknown;
+   renderIndex?: number;
+   enableViewportCulling?: boolean;
+   isSelected?: boolean;
+   showEditScan?: boolean;
+   showBlankPromptOverlay?: boolean;
+   onBlankPromptOverlayDismiss?: () => void;
+   showTemplatePromptOverlay?: boolean;
+   onTemplatePromptOverlayDismiss?: () => void;
+ }) => {
+   const containerRef = useRef<HTMLDivElement | null>(null);
+   const [box, setBox] = useState({ w: 0, h: 0 });
+ 
++  const presentationTypography = useSelector(
++    (state: RootState) =>
++      (state.presentationGeneration.presentationData as
++        | { typography?: unknown }
++        | null)?.typography ?? null
++  );
++  const baseTypography =
++    typography !== undefined ? typography : presentationTypography;
++  const effectiveTypography = useMemo(
++    () =>
++      resolveTypography(
++        baseTypography as Parameters<typeof resolveTypography>[0],
++        (slide?.typography ?? null) as Parameters<typeof resolveTypography>[1]
++      ),
++    [baseTypography, slide?.typography]
++  );
++
+   const scale = useMemo(() => {
+     if (fixedSize) return 1;
+     if (presentMode) {
+       if (box.w < 1 || box.h < 1) return 1;
+       const sx = box.w / BASE_WIDTH;
+       const sy = box.h / BASE_HEIGHT;
+       return Math.min(sx, sy);
+     }
+     if (fitToContainer) {
+       if (box.w < 1 || box.h < 1) return 1;
+@@ -136,27 +161,29 @@ const SlideScale = ({
+                 aria-hidden="true"
+               />
+             )}
+             {typeof slide?.html_content === "string" && slide.html_content.trim() ? (
+               isEditMode && isClickable && !presentMode && !fixedSize ? (
+                 <SmartHtmlEditor
+                   slide={slide}
+                   renderIndex={renderIndex}
+                   fonts={fonts}
+                   title={`Slide ${(renderIndex ?? slide.index ?? 0) + 1}`}
++                  typography={effectiveTypography}
+                 />
+               ) : (
+                 <SmartHtmlSlide
+                   fixedSize
+                   fonts={fonts}
+                   html={slide.html_content}
+                   title={`Slide ${(renderIndex ?? slide.index ?? 0) + 1}`}
++                  typography={effectiveTypography}
+                 />
+               )
+             ) : (
+               <V1ContentRender
+                 slide={slide}
+                 presentationId={presentationId}
+                 isEditMode={isEditMode}
+                 theme={theme}
+                 fonts={fonts}
+                 presentationLayout={presentationLayout}
+diff --git a/servers/nextjs/app/(presentation-generator)/components/SmartHtmlSlide.tsx b/servers/nextjs/app/(presentation-generator)/components/SmartHtmlSlide.tsx
+index d56d3216..bdca6d62 100644
+--- a/servers/nextjs/app/(presentation-generator)/components/SmartHtmlSlide.tsx
++++ b/servers/nextjs/app/(presentation-generator)/components/SmartHtmlSlide.tsx
+@@ -1,16 +1,20 @@
+ "use client";
+ 
+ import DOMPurify, { type Config as DOMPurifyConfig } from "dompurify";
+ import { useEffect, useMemo, useRef, useState } from "react";
+ 
+ import { useTailwindRuntimeReady } from "@/components/runtime/TailwindBrowserRuntime";
++import {
++  typographyStyleCss,
++  type TypographyConfig,
++} from "@/components/typography/effective";
+ import {
+   localFontOptionsFromUnknown,
+   renderLocalFontFaceCss,
+ } from "@/components/slide-editor/text/local-fonts";
+ import {
+   CHART_BROWSER_SCRIPT_URL,
+   CHART_DATALABELS_SCRIPT_URL,
+ } from "@/lib/chart-browser";
+ import { TAILWIND_BROWSER_SCRIPT_URL } from "@/lib/tailwind-browser";
+ import { useSmartChartInjection } from "./useSmartChartInjection";
+@@ -30,94 +34,112 @@ const SANITIZE_CONFIG: DOMPurifyConfig = {
+     "link",
+     "meta",
+     "object",
+     "script",
+     "style",
+   ],
+   FORBID_ATTR: ["autofocus", "contenteditable", "srcdoc"],
+   ALLOW_DATA_ATTR: true,
+ };
+ 
++function styleBlock(css: string) {
++  return css ? `<style>${css.replaceAll("</style", "<\\/style")}</style>` : "";
++}
++
+ function fontAssets(fonts: unknown) {
+   const css = localFontOptionsFromUnknown(fonts)
+     .map(renderLocalFontFaceCss)
+     .join("");
+-  return css ? `<style>${css.replaceAll("</style", "<\\/style")}</style>` : "";
++  return styleBlock(css);
+ }
+ 
+-function previewDocument(html: string, fonts: unknown) {
++function previewDocument(
++  html: string,
++  fonts: unknown,
++  typography?: TypographyConfig | null,
++) {
+   return `<!doctype html>
+   <html>
+     <head>
+       <meta charset="utf-8">
+       <meta name="viewport" content="width=1280, initial-scale=1">
+       ${fontAssets(fonts)}
++      ${styleBlock(typographyStyleCss(typography))}
+       <script src="${TAILWIND_BROWSER_SCRIPT_URL}"></script>
+       <script src="${CHART_BROWSER_SCRIPT_URL}"></script>
+       <script src="${CHART_DATALABELS_SCRIPT_URL}"></script>
+       <script>
+         if (window.Chart && window.ChartDataLabels) {
+           window.Chart.register(window.ChartDataLabels);
+         }
+       </script>
+       <style>
+         html,body{width:1280px;height:720px;min-width:1280px;min-height:720px;margin:0;overflow:hidden;background:#fff}
+         *{box-sizing:border-box}
+       </style>
+     </head>
+     <body>${html}</body>
+   </html>`;
+ }
+ 
+-function useSlideFontAssets(fonts: unknown, enabled: boolean) {
++function useSlideFontAssets(
++  fonts: unknown,
++  enabled: boolean,
++  typography?: TypographyConfig | null,
++) {
+   useEffect(() => {
+     if (!enabled) return;
+-    const css = localFontOptionsFromUnknown(fonts)
+-      .map(renderLocalFontFaceCss)
+-      .join("");
++    const css = [
++      localFontOptionsFromUnknown(fonts).map(renderLocalFontFaceCss).join(""),
++      typographyStyleCss(typography),
++    ]
++      .filter(Boolean)
++      .join("\n");
+     if (!css) return;
+ 
+     const style = document.createElement("style");
+     style.dataset.slideFontAssets = "true";
+     style.textContent = css;
+     document.head.appendChild(style);
+     return () => style.remove();
+-  }, [enabled, fonts]);
++  }, [enabled, fonts, typography]);
+ }
+ 
+ function LinuxInPageSmartHtmlSlide({
+   html,
+   fonts,
++  typography,
+   fixedSize,
+   title,
+   executeScripts,
+ }: {
+   html: string;
+   fonts?: unknown;
++  typography?: TypographyConfig | null;
+   fixedSize: boolean;
+   title: string;
+   executeScripts: boolean;
+ }) {
+   const tailwindReady = useTailwindRuntimeReady();
+   const containerRef = useRef<HTMLDivElement | null>(null);
+   const slideRef = useRef<HTMLDivElement | null>(null);
+   const [width, setWidth] = useState(0);
+   const [instanceId] = useState(
+     () => `smart-slide-preview-${Math.random().toString(36).slice(2)}`
+   );
+   const [sanitizedHtml, setSanitizedHtml] = useState("");
+ 
+   useEffect(() => {
+     setSanitizedHtml(DOMPurify.sanitize(html, SANITIZE_CONFIG));
+   }, [html]);
+ 
+-  useSlideFontAssets(fonts, executeScripts);
++  useSlideFontAssets(fonts, executeScripts, typography);
+   useSmartChartInjection({
+     html: executeScripts && tailwindReady && sanitizedHtml ? html : "",
+     instanceId,
+     domRevision: sanitizedHtml,
+     containerRef: slideRef,
+   });
+ 
+   useEffect(() => {
+     if (fixedSize) return;
+     const element = containerRef.current;
+@@ -153,31 +175,36 @@ function LinuxInPageSmartHtmlSlide({
+         }}
+         dangerouslySetInnerHTML={{ __html: sanitizedHtml }}
+       />
+     </div>
+   );
+ }
+ 
+ function IframeSmartHtmlSlide({
+   html,
+   fonts,
++  typography,
+   fixedSize,
+   title,
+ }: {
+   html: string;
+   fonts?: unknown;
++  typography?: TypographyConfig | null;
+   fixedSize: boolean;
+   title: string;
+ }) {
+   const containerRef = useRef<HTMLDivElement | null>(null);
+   const [width, setWidth] = useState(0);
+-  const srcDoc = useMemo(() => previewDocument(html, fonts), [fonts, html]);
++  const srcDoc = useMemo(
++    () => previewDocument(html, fonts, typography),
++    [fonts, html, typography],
++  );
+ 
+   useEffect(() => {
+     if (fixedSize) return;
+     const element = containerRef.current;
+     if (!element) return;
+     const update = () => setWidth(element.clientWidth);
+     update();
+     const observer = new ResizeObserver(update);
+     observer.observe(element);
+     return () => observer.disconnect();
+@@ -212,41 +239,45 @@ function IframeSmartHtmlSlide({
+           title={title}
+         />
+       </div>
+     </div>
+   );
+ }
+ 
+ export default function SmartHtmlSlide({
+   html,
+   fonts,
++  typography,
+   fixedSize = false,
+   title = "Smart presentation slide",
+   executeScripts = true,
+ }: {
+   html: string;
+   fonts?: unknown;
++  typography?: TypographyConfig | null;
+   fixedSize?: boolean;
+   title?: string;
+   executeScripts?: boolean;
+ }) {
+   if (USE_LINUX_IN_PAGE_RENDERER) {
+     return (
+       <LinuxInPageSmartHtmlSlide
+         fixedSize={fixedSize}
+         fonts={fonts}
+         html={html}
+         title={title}
++        typography={typography}
+         executeScripts={executeScripts}
+       />
+     );
+   }
+ 
+   return (
+     <IframeSmartHtmlSlide
+       fixedSize={fixedSize}
+       fonts={fonts}
+       html={html}
+       title={title}
++      typography={typography}
+     />
+   );
+ }
+diff --git a/servers/nextjs/app/(presentation-generator)/components/V1ContentRender.tsx b/servers/nextjs/app/(presentation-generator)/components/V1ContentRender.tsx
+index d2726149..638243f2 100644
+--- a/servers/nextjs/app/(presentation-generator)/components/V1ContentRender.tsx
++++ b/servers/nextjs/app/(presentation-generator)/components/V1ContentRender.tsx
+@@ -1,20 +1,25 @@
+ "use client";
+ 
+ import React, { useMemo, useState, type FormEvent } from "react";
++import { useSelector } from "react-redux";
+ import SlideErrorBoundary from "../components/SlideErrorBoundary";
+ 
+ import { ArrowUp, PenLine } from "lucide-react";
+ import {
+     type TemplateV2Layout,
+ } from "@/components/slide-editor/importing/template-v2-import";
+ import { TemplateV2KonvaSlide } from "@/components/slide-editor/surface/TemplateV2KonvaSlide";
++import {
++    resolveTypography,
++} from "@/components/typography/effective";
++import type { RootState } from "@/store/store";
+ import { TemplateV2HtmlSlidePreview } from "./TemplateV2HtmlSlidePreview";
+ import {
+     BLANK_TEMPLATE_V2_LAYOUT,
+     isBlankPresentationSlide,
+     isTemplateV2Slide as isTemplateV2PresentationSlide,
+ } from "../_shared/blank-slide";
+ import {
+     PRESENTON_BLANK_SLIDE_PROMPT_EVENT,
+     type BlankSlidePromptEventDetail,
+ } from "../_shared/blank-slide-prompt-event";
+@@ -201,52 +206,64 @@ export const V1ContentRender = ({
+         if (!isTemplateV2Slide) return null;
+ 
+         const slideUi = safeSlide.ui;
+         return slideUi &&
+             typeof slideUi === "object" &&
+             !Array.isArray(slideUi)
+             ? slideUi as TemplateV2Layout
+             : null;
+     }, [isTemplateV2Slide, safeSlide.ui]);
+ 
++    const presentationTypography = useSelector(
++        (state: RootState) =>
++            (state.presentationGeneration.presentationData as
++                | { typography?: unknown }
++                | null)?.typography ?? null
++    );
+ 
++    const typographyConfig = useMemo(
++        () =>
++            resolveTypography(
++                presentationTypography as Parameters<typeof resolveTypography>[0],
++                (safeSlide.typography ?? null) as Parameters<typeof resolveTypography>[1]
++            ),
++        [presentationTypography, safeSlide.typography]
++    );
+ 
+-    if (isBlankSlide) {
+-        if (!isTemplateV2Slide) {
+-            return <div className="h-full w-full bg-white" />;
+-        }
+-    }
+-
+-    const directLayout = templateV2Layout ??
+-        (isBlankSlide ? BLANK_TEMPLATE_V2_LAYOUT : null);
++    const baseLayout =
++        templateV2Layout ?? (isBlankSlide ? BLANK_TEMPLATE_V2_LAYOUT : null);
+ 
++    if (isBlankSlide && !isTemplateV2Slide) {
++        return <div className="h-full w-full bg-white" />;
++    }
+ 
+     return (
+         <SlideErrorBoundary label={`Slide ${(safeSlide.index ?? 0) + 1}`}>
+             <div className="relative h-full w-full">
+                 <TemplateV2KonvaSlide
+-                    layout={directLayout ?? BLANK_TEMPLATE_V2_LAYOUT}
++                    layout={baseLayout ?? BLANK_TEMPLATE_V2_LAYOUT}
++                    typography={typographyConfig}
+                     isEditMode={isEditMode}
+                     slideId={safeSlide.id ?? null}
+                     presentationId={presentationId}
+                     slideIndex={safeSlide.index ?? 0}
+                     renderIndex={renderIndex}
+                     fonts={fonts}
+                     displayScale={displayScale}
+                     enableViewportCulling={enableViewportCulling}
+                     isSelected={isSelected}
+                 />
+                 {isEditMode &&
+                     ((showBlankPromptOverlay && isBlankSlide) ||
+                         (showTemplatePromptOverlay && !isBlankSlide)) ? (
+                     <TemplateV2PromptOverlay
+-                        layout={directLayout ?? BLANK_TEMPLATE_V2_LAYOUT}
++                        layout={baseLayout ?? BLANK_TEMPLATE_V2_LAYOUT}
+                         slideIndex={safeSlide.index ?? 0}
+                         showLayoutPreview={!isBlankSlide}
+                         onDismiss={
+                             isBlankSlide
+                                 ? onBlankPromptOverlayDismiss
+                                 : onTemplatePromptOverlayDismiss
+                         }
+                     />
+                 ) : null}
+             </div>
+diff --git a/servers/nextjs/app/(presentation-generator)/outline/components/OutlinePage.tsx b/servers/nextjs/app/(presentation-generator)/outline/components/OutlinePage.tsx
+index c05d15c0..b8757308 100644
+--- a/servers/nextjs/app/(presentation-generator)/outline/components/OutlinePage.tsx
++++ b/servers/nextjs/app/(presentation-generator)/outline/components/OutlinePage.tsx
+@@ -45,20 +45,22 @@ import TemplateSelection from "./TemplateSelection";
+ const DEFAULT_OUTLINE_CONFIG: PresentationConfig = {
+   slides: null,
+   language: LanguageType.Auto,
+   prompt: "",
+   tone: ToneType.Default,
+   verbosity: VerbosityType.Standard,
+   instructions: "",
+   includeTableOfContents: false,
+   includeTitleSlide: false,
+   webSearch: false,
++  typography: null,
++  fonts: {},
+ };
+ 
+ const normalizeOutlineConfig = (
+   config: PresentationConfig
+ ): PresentationConfig => ({
+   ...config,
+   slides: config.slides ? clampSlideCountValue(config.slides) || null : null,
+ });
+ 
+ const getDocumentPaths = (files: unknown): string[] => {
+@@ -270,20 +272,22 @@ const OutlinePage: React.FC = () => {
+         content: draftConfig.prompt ?? "",
+         n_slides: parseLimitedSlideCount(draftConfig.slides),
+         file_paths: documentPaths,
+         language: draftConfig.language ?? "",
+         tone: draftConfig.tone,
+         verbosity: draftConfig.verbosity,
+         instructions: draftConfig.instructions || null,
+         include_table_of_contents: !!draftConfig.includeTableOfContents,
+         include_title_slide: !!draftConfig.includeTitleSlide,
+         web_search: !!draftConfig.webSearch,
++        typography: draftConfig.typography ?? null,
++        fonts: draftConfig.fonts ?? {},
+       });
+ 
+       dispatch(setPptGenUploadState({ config: draftConfig, files }));
+       dispatch(clearOutlines());
+       dispatch(setPresentationId(createResponse.id));
+       trackEvent(MixpanelEvent.TemplateV2_Outline_Regeneration_Completed, {
+         old_presentation_id: presentation_id,
+         new_presentation_id: createResponse.id,
+         template_id: selectedTemplateId,
+       });
+diff --git a/servers/nextjs/components/slide-editor/surface/TemplateV2KonvaSlide.tsx b/servers/nextjs/components/slide-editor/surface/TemplateV2KonvaSlide.tsx
+index ea95e745..5cc401b7 100644
+--- a/servers/nextjs/components/slide-editor/surface/TemplateV2KonvaSlide.tsx
++++ b/servers/nextjs/components/slide-editor/surface/TemplateV2KonvaSlide.tsx
+@@ -81,20 +81,23 @@ import { TemplateV2InlineEditor } from "@/components/slide-editor/text/TemplateV
+ import { StaticHtmlTextLayer } from "@/components/slide-editor/text/StaticHtmlTextLayer";
+ import {
+   measureWordWrappedTextRunsHeight,
+   type TemplateV2InlineEditBox,
+   type TemplateV2TextEditStyle,
+   wordWrappedTextRuns,
+ } from "@/components/slide-editor/text/template-v2-text-editing";
+ 
+ 
+ import { updateSlideUi } from "@/store/slices/presentationGeneration";
++import { isAutoTypography } from "@/components/typography/effective";
++import type { TypographyConfig } from "@/components/typography/effective";
++import { applyTypographyToSlide } from "@/components/typography/apply-to-slide";
+ import { useNearViewport } from "@/app/hooks/useNearViewport";
+ import { resolveBackendAssetSource } from "@/utils/api";
+ import { bucketFileSize, sanitizeAnalyticsError } from "@/utils/analytics";
+ import { MixpanelEvent, trackEvent } from "@/utils/mixpanel";
+ import { ImagesApi } from "@/app/(presentation-generator)/services/api/images";
+ import IconsEditor from "@/components/slide-editor/images/IconsEditor";
+ import { IconToolbar } from "@/components/slide-editor/images/IconToolbar";
+ import { ImageToolbar } from "@/components/slide-editor/images/ImageToolbar";
+ import {
+   createTemplateV2ClipboardPayload,
+@@ -306,20 +309,22 @@ export {
+ } from "@/components/slide-editor/events/events";
+ 
+ type TemplateV2KonvaSlideProps = {
+   layout: TemplateV2Layout;
+   isEditMode: boolean;
+   slideId?: string | number | null;
+   presentationId?: string;
+   slideIndex: number;
+   renderIndex?: number;
+   fonts?: unknown;
++  /** Role typography painted on top of the stored layout; never persisted. */
++  typography?: TypographyConfig | null;
+   displayScale?: number;
+   enableViewportCulling?: boolean;
+   isSelected?: boolean;
+   historyCommand?: { action: "undo" | "redo"; token: number } | null;
+   onHistoryAvailabilityChange?: (availability: {
+     canUndo: boolean;
+     canRedo: boolean;
+   }) => void;
+   onLayoutChange?: (layout: TemplateV2Layout) => void;
+ };
+@@ -389,20 +394,21 @@ function syncAlignmentGuideNode(
+ }
+ 
+ function TemplateV2KonvaSlideComponent({
+   layout,
+   isEditMode,
+   slideId = null,
+   presentationId,
+   slideIndex,
+   renderIndex,
+   fonts,
++  typography = null,
+   displayScale = 1,
+   enableViewportCulling = false,
+   isSelected = false,
+   historyCommand = null,
+   onHistoryAvailabilityChange,
+   onLayoutChange,
+ }: TemplateV2KonvaSlideProps) {
+   const effectiveDisplayScale = Number.isFinite(displayScale)
+     ? Math.max(0.1, Math.abs(displayScale))
+     : 1;
+@@ -558,27 +564,37 @@ function TemplateV2KonvaSlideComponent({
+   } = useTableCellSelection<Selection, ElementSelection>({
+     keyForSelection,
+     selection,
+   });
+   const setRootNode = useCallback((node: HTMLDivElement | null) => {
+     rootRef.current = node;
+     setRootElement(node);
+     setViewportRoot(node);
+   }, [setViewportRoot]);
+ 
++  // Role typography is a paint-time overlay: `uiDraft` keeps the stored font
++  // sizes so committing an edit cannot bake an override into the slide.
++  const renderUi = useMemo(
++    () =>
++      typography && !isAutoTypography(typography)
++        ? applyTypographyToSlide(uiDraft, typography)
++        : uiDraft,
++    [typography, uiDraft],
++  );
++
+   const components = useMemo(
+-    () => readArray(uiDraft.components).filter(isRecord) as RawComponent[],
+-    [uiDraft.components],
++    () => readArray(renderUi.components).filter(isRecord) as RawComponent[],
++    [renderUi.components],
+   );
+   const rootElements = useMemo(
+-    () => readArray(uiDraft.elements).filter(isRecord) as RawElement[],
+-    [uiDraft.elements],
++    () => readArray(renderUi.elements).filter(isRecord) as RawElement[],
++    [renderUi.elements],
+   );
+   const setSelectionNodeRef = useCallback(
+     (key: string, node: Konva.Node | null) => {
+       if (node) nodeRefs.current.set(key, node);
+       else nodeRefs.current.delete(key);
+     },
+     [],
+   );
+   const selectedComponentIndexes = useMemo(
+     () => componentIndexesForSelection(selection),
+@@ -3119,21 +3135,21 @@ function TemplateV2KonvaSlideComponent({
+             />
+           </Layer>
+         ) : null}
+         </Stage>
+       ) : null}
+       {isRenderActive ? (
+         <StaticHtmlTextLayer
+           editingKey={editingKey}
+           nodeRefs={nodeRefs}
+           revision={fontLoadState.revision}
+-          ui={uiDraft}
++          ui={renderUi}
+         />
+       ) : null}
+       {!infographicCanvasSelection ? <TemplateV2SelectionToolbar
+         anchorBox={floatingToolbarAnchorBox}
+         canUngroupComponent={canUngroupSelectedComponent}
+         canUngroupLayoutTarget={canUngroupLayoutTargetComponent}
+         chartTarget={chartToolbarTarget}
+         componentCount={components.length}
+         editorTarget={editorToolbarTarget}
+         isEditMode={isEditMode}
+diff --git a/servers/nextjs/store/slices/presentationGeneration.ts b/servers/nextjs/store/slices/presentationGeneration.ts
+index 7d42bf1f..8141e843 100644
+--- a/servers/nextjs/store/slices/presentationGeneration.ts
++++ b/servers/nextjs/store/slices/presentationGeneration.ts
+@@ -16,20 +16,21 @@ export interface PresentationData {
+   slides: any;
+   theme: TemplateTheme | null;
+   template_id?: string | null;
+   design_v2_id?: string | null;
+   version?: string;
+   generation_mode?: "standard" | "smart";
+   type?: "standard" | "smart";
+   community_design_ids?: number[] | null;
+   components?: any;
+   fonts?: any;
++  typography?: import("@/components/typography/effective").TypographyConfig | null;
+   structure?: any;
+ }
+ 
+ export interface ChatHtmlSelection {
+   slideId?: string | null;
+   slideIndex: number;
+   slideNumber: number;
+   html: string;
+   elementTag?: string | null;
+   selectedText?: string;
+
+
+## Untracked files touched by the fix (whole file is the delta - Read each path)
+- servers/fastapi/services/typography_service.py
+- servers/fastapi/tests/unit/test_typography_service.py
+- servers/fastapi/tests/unit/test_presentation_typography_api.py
+- servers/nextjs/app/(presentation-generator)/typography/components/TypographyEditor.tsx

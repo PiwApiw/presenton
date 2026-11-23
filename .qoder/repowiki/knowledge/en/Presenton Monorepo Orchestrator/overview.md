@@ -1,0 +1,1 @@
+Top-level entrypoint that boots the Presenton application by orchestrating the Electron shell, FastAPI backend, Next.js frontend, Nginx reverse proxy, and optional Ollama runtime into a single process.

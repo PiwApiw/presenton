@@ -174,6 +174,8 @@ const UploadPage = ({
     includeTableOfContents: false,
     includeTitleSlide: false,
     webSearch: false,
+    typography: null,
+    fonts: {},
   });
 
   useEffect(() => {
@@ -500,6 +502,8 @@ const UploadPage = ({
         communityEnabled && generationMode === "smart" && communityReference
           ? [communityReference.id]
           : undefined,
+      typography: config?.typography ?? null,
+      fonts: config?.fonts ?? {},
     });
 
     dispatch(setPptGenUploadState({
@@ -563,6 +567,8 @@ const UploadPage = ({
         communityEnabled && generationMode === "smart" && communityReference
           ? [communityReference.id]
           : undefined,
+      typography: config?.typography ?? null,
+      fonts: config?.fonts ?? {},
     });
 
     dispatch(setPptGenUploadState({

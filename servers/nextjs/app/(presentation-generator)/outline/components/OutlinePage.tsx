@@ -52,6 +52,8 @@ const DEFAULT_OUTLINE_CONFIG: PresentationConfig = {
   includeTableOfContents: false,
   includeTitleSlide: false,
   webSearch: false,
+  typography: null,
+  fonts: {},
 };
 
 const normalizeOutlineConfig = (
@@ -277,6 +279,8 @@ const OutlinePage: React.FC = () => {
         include_table_of_contents: !!draftConfig.includeTableOfContents,
         include_title_slide: !!draftConfig.includeTitleSlide,
         web_search: !!draftConfig.webSearch,
+        typography: draftConfig.typography ?? null,
+        fonts: draftConfig.fonts ?? {},
       });
 
       dispatch(setPptGenUploadState({ config: draftConfig, files }));

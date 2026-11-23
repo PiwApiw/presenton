@@ -45,6 +45,11 @@ import {
 } from "../../_shared/blank-slide";
 import PresentationHeader from "./PresentationHeader";
 import PresentationActions from "./PresentationActions";
+import TypographyEditor from "../../typography/components/TypographyEditor";
+import { TypographyService } from "../../services/api/typography";
+import { PresentationGenerationApi } from "../../services/api/presentation-generation";
+import type { TypographyConfig } from "@/components/typography/effective";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
   TEMPLATE_V2_ACTIVATE_SURFACE_EVENT,
   TEMPLATE_V2_SURFACE_SELECTED_EVENT,
@@ -174,6 +179,16 @@ const PresentationPage: React.FC<PresentationPageProps> = ({
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(false);
   const [showNavigationHint, setShowNavigationHint] = useState(false);
   const [error, setError] = useState(false);
+  const [typographyOpen, setTypographyOpen] = useState(false);
+  const [typographyScope, setTypographyScope] = useState<
+    "presentation" | "slide"
+  >("presentation");
+  const [typographyDraft, setTypographyDraft] = useState<TypographyConfig | null>(
+    null
+  );
+  const [fontsDraft, setFontsDraft] = useState<Record<string, string>>({});
+  const [typographySaving, setTypographySaving] = useState(false);
+  const [typographyError, setTypographyError] = useState<string | null>(null);
   const mobileAssistantTriggerRef = useRef<HTMLButtonElement | null>(null);
   const mobileAssistantCloseRef = useRef<HTMLButtonElement | null>(null);
   const presentationCanvasRef = useRef<HTMLDivElement | null>(null);
@@ -617,6 +632,66 @@ const PresentationPage: React.FC<PresentationPageProps> = ({
       ? Math.min(Math.max(selectedSlide, 0), totalSlides - 1)
       : 0;
   const activeEditorSlide = presentationData?.slides?.[activeSlideIndex];
+  const savedFonts = (presentationData?.fonts ?? {}) as Record<string, string>;
+  const presentationTypography =
+    (presentationData as { typography?: TypographyConfig | null } | null)
+      ?.typography ?? null;
+
+  const openTypography = () => {
+    setTypographyScope("presentation");
+    setFontsDraft({});
+    setTypographyError(null);
+    setTypographyDraft(presentationTypography);
+    setTypographyOpen(true);
+  };
+
+  const selectTypographyScope = (scope: "presentation" | "slide") => {
+    setTypographyScope(scope);
+    setTypographyDraft(
+      scope === "presentation"
+        ? presentationTypography
+        : ((activeEditorSlide?.typography ?? null) as TypographyConfig | null)
+    );
+  };
+
+  const saveTypography = async () => {
+    if (!presentationData) return;
+    setTypographySaving(true);
+    setTypographyError(null);
+    try {
+      if (typographyScope === "presentation") {
+        await TypographyService.updatePresentationTypography(
+          presentationData.id,
+          {
+            typography: typographyDraft,
+            fonts: { ...savedFonts, ...fontsDraft },
+          }
+        );
+      } else {
+        if (Object.keys(fontsDraft).length > 0) {
+          await TypographyService.updatePresentationTypography(
+            presentationData.id,
+            { fonts: fontsDraft }
+          );
+        }
+        if (activeEditorSlide?.id) {
+          await PresentationGenerationApi.updatePresentationSlide({
+            ...activeEditorSlide,
+            typography: typographyDraft,
+          });
+        }
+      }
+      await fetchUserSlides({ clearHistory: false });
+      setTypographyOpen(false);
+    } catch (saveError) {
+      console.error("Failed to save typography", saveError);
+      setTypographyError(
+        saveError instanceof Error ? saveError.message : "Gagal menyimpan tipografi"
+      );
+    } finally {
+      setTypographySaving(false);
+    }
+  };
 
   useEffect(() => {
     if (isPresentMode || totalSlides <= 1) return;
@@ -862,6 +937,7 @@ const PresentationPage: React.FC<PresentationPageProps> = ({
           isPresentationSaving={isSaving}
           currentSlide={selectedSlide}
           generationMode={isSmartPresentation ? "smart" : "standard"}
+          onOpenTypography={openTypography}
         />
         <div className="flex flex-1 min-h-0 gap-3 overflow-hidden xl:gap-5 2xl:gap-6">
           <div className="sticky top-0 hidden h-full w-[165px] shrink-0 self-start md:block">
@@ -1042,6 +1118,70 @@ const PresentationPage: React.FC<PresentationPageProps> = ({
           </div>
         </div>
       </div>
+      <Dialog open={typographyOpen} onOpenChange={setTypographyOpen}>
+        <DialogContent className="w-[460px] rounded-2xl border-0 p-0 shadow-2xl sm:max-w-[460px]">
+          <DialogTitle className="px-6 pt-6 font-syne text-base font-semibold text-[#101323]">
+            Tipografi
+          </DialogTitle>
+          <div className="space-y-4 px-6 pb-6 pt-4">
+            <div className="flex gap-2">
+              <button
+                type="button"
+                data-testid="typography-scope-presentation"
+                onClick={() => selectTypographyScope("presentation")}
+                className={cn(
+                  "h-8 rounded-md px-3 text-xs font-medium transition-colors",
+                  typographyScope === "presentation"
+                    ? "bg-[#101323] text-white"
+                    : "border border-[#E6E6EC] bg-white text-[#3D3D48]"
+                )}
+              >
+                Seluruh presentasi
+              </button>
+              <button
+                type="button"
+                data-testid="typography-scope-slide"
+                onClick={() => selectTypographyScope("slide")}
+                disabled={totalSlides === 0}
+                className={cn(
+                  "h-8 rounded-md px-3 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                  typographyScope === "slide"
+                    ? "bg-[#101323] text-white"
+                    : "border border-[#E6E6EC] bg-white text-[#3D3D48]"
+                )}
+              >
+                Slide ini
+              </button>
+            </div>
+
+            <TypographyEditor
+              value={typographyDraft}
+              onChange={setTypographyDraft}
+              scope={typographyScope}
+              templateFonts={Object.keys(savedFonts)}
+              resolveGoogleFont={TypographyService.resolveGoogleFont}
+              onFontResolved={(family, url) =>
+                setFontsDraft((current) => ({ ...current, [family]: url }))
+              }
+            />
+
+            {typographyError ? (
+              <p role="alert" className="text-xs text-red-600">
+                {typographyError}
+              </p>
+            ) : null}
+
+            <Button
+              className="h-9 w-full"
+              data-testid="typography-save"
+              onClick={() => void saveTypography()}
+              disabled={typographySaving}
+            >
+              {typographySaving ? "Menyimpan..." : "Simpan"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

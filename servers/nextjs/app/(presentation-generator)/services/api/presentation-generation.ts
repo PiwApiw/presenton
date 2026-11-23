@@ -2,6 +2,7 @@ import { getHeader, getHeaderForFormData } from "./header";
 import { IconSearch, ImageGenerate, PreviousGeneratedImagesResponse } from "./params";
 import { ApiResponseHandler } from "./api-error-handler";
 import { getApiUrl, resolveBackendAssetUrl } from "@/utils/api";
+import type { TypographyConfig } from "@/components/typography/effective";
 import {
   limitOutlines,
   MAX_NUMBER_OF_SLIDES,
@@ -85,6 +86,8 @@ export class PresentationGenerationApi {
     web_search,
     generation_mode = "standard",
     community_design_ids,
+    typography,
+    fonts,
   }: {
     content: string;
     version?: PresentationVersion;
@@ -99,6 +102,8 @@ export class PresentationGenerationApi {
     web_search?: boolean;
     generation_mode?: "standard" | "smart";
     community_design_ids?: number[];
+    typography?: TypographyConfig | null;
+    fonts?: Record<string, string>;
   }) {
     try {
       const limitedSlideCount =
@@ -124,6 +129,8 @@ export class PresentationGenerationApi {
             web_search,
             generation_mode,
             community_design_ids,
+            typography,
+            fonts,
           }),
           cache: "no-cache",
         }

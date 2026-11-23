@@ -19,7 +19,7 @@ from fastapi import (
     Request,
 )
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -43,6 +43,18 @@ from models.presentation_with_slides import (
 from services.documents_loader import DocumentsLoader
 from services.chat.slide_ui_helpers import _normalize_generated_image_fit
 from services.temp_file_service import TEMP_FILE_SERVICE
+from models.typography import (
+    TypographyConfig,
+    UpdateTypographyRequest,
+    is_auto,
+    parse_typography,
+)
+from services.smart_typography_roles import ensure_role_markers
+from services.typography_service import (
+    apply_role_markers_to_presentation,
+    ensure_fonts_resolved,
+    merge_font_urls,
+)
 from services.webhook_service import WebhookService
 from services.image_generation_service import ImageGenerationService
 from services.mem0_presentation_memory_service import (
@@ -1569,6 +1581,29 @@ async def delete_presentation(
     await sql_session.commit()
 
 
+@PRESENTATION_ROUTER.patch("/{id}/typography", response_model=PresentationModel)
+async def update_presentation_typography(
+    id: uuid.UUID,
+    payload: UpdateTypographyRequest,
+    sql_session: AsyncSession = Depends(get_async_session),
+):
+    presentation = await sql_session.get(PresentationModel, id)
+    if not presentation:
+        raise HTTPException(404, "Presentation not found")
+
+    merged_fonts = merge_font_urls(presentation.fonts, payload.fonts)
+    if "typography" in payload.model_fields_set:
+        config = ensure_fonts_resolved(payload.typography, merged_fonts)
+        presentation.typography = config.model_dump() if config else None
+    presentation.fonts = merged_fonts
+    await sql_session.commit()
+    await sql_session.refresh(presentation)
+
+    if presentation.typography is not None and not is_auto(presentation.typography):
+        await apply_role_markers_to_presentation(sql_session, presentation.id)
+    return presentation
+
+
 @PRESENTATION_ROUTER.post("/{id}/duplicate", response_model=PresentationWithSlides)
 async def duplicate_presentation(
     id: uuid.UUID, sql_session: AsyncSession = Depends(get_async_session)
@@ -1653,6 +1688,8 @@ async def create_presentation(
     web_search: Annotated[bool, Body()] = False,
     generation_mode: Annotated[Literal["standard", "smart"], Body()] = "standard",
     community_design_ids: Annotated[Optional[List[int]], Body()] = None,
+    typography: Annotated[Optional[TypographyConfig], Body()] = None,
+    fonts: Annotated[Optional[dict[str, str]], Body()] = None,
     sql_session: AsyncSession = Depends(get_async_session),
 ):
 
@@ -1703,6 +1740,9 @@ async def create_presentation(
     # DB schema stores an int; 0 is used as internal marker for auto slide count.
     n_slides_to_store = n_slides if n_slides is not None else 0
 
+    merged_fonts = merge_font_urls(None, fonts)
+    normalized_typography = ensure_fonts_resolved(typography, merged_fonts)
+
     presentation = PresentationModel(
         id=presentation_id,
         version=PresentationVersion.V2_STANDARD,
@@ -1718,6 +1758,10 @@ async def create_presentation(
         web_search=web_search,
         generation_mode=generation_mode,
         community_design_ids=normalized_community_ids or None,
+        fonts=merged_fonts,
+        typography=(
+            normalized_typography.model_dump() if normalized_typography else None
+        ),
     )
 
     sql_session.add(presentation)
@@ -2099,6 +2143,7 @@ async def stream_smart_presentation(
                 source_context=source_context,
                 community_design_context=community_context,
                 fonts=presentation.fonts,
+                typography=presentation.typography,
                 existing_slides=[
                     {"html": slide.html_content or ""} for slide in existing_slides
                 ],
@@ -2191,6 +2236,21 @@ async def stream_smart_presentation(
         final_presentation.fonts = final_fonts
         sql_session.add(final_presentation)
         await sql_session.commit()
+
+        # Smart slide HTML carries no role markers from older prompts, so add
+        # them here and reload the rows: the commit inside the backfill expires
+        # this session's instances.
+        if final_presentation.typography is not None and not is_auto(
+            final_presentation.typography
+        ):
+            await apply_role_markers_to_presentation(sql_session, presentation_id)
+            slides = list(
+                await sql_session.scalars(
+                    select(SlideModel)
+                    .where(SlideModel.presentation == presentation_id)
+                    .order_by(SlideModel.index)
+                )
+            )
 
         response = PresentationWithSlides(
             **_presentation_response_data(final_presentation),
@@ -2567,11 +2627,35 @@ async def update_presentation_slide(
             detail="Slide does not belong to the supplied presentation",
         )
 
+    if "typography" in slide.model_fields_set and slide.typography is not None:
+        try:
+            slide.typography = parse_typography(slide.typography).model_dump()
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "Invalid typography configuration",
+                    "errors": exc.errors(include_url=False),
+                },
+            ) from exc
+
     stored_slide.sqlmodel_update(
         slide.model_dump(
             exclude={"id", "presentation", "index"},
         )
     )
+    if (
+        stored_slide.html_content
+        and stored_slide.typography
+        and not is_auto(stored_slide.typography)
+    ):
+        properties = dict(stored_slide.properties or {})
+        if properties.get("typography_roles_version") != 1:
+            updated_html, changed = ensure_role_markers(stored_slide.html_content)
+            if changed:
+                stored_slide.html_content = updated_html
+            properties["typography_roles_version"] = 1
+            stored_slide.properties = properties
     sql_session.add(stored_slide)
     await sql_session.commit()
     await sql_session.refresh(stored_slide)

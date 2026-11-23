@@ -80,6 +80,7 @@ PRESENTATION_LANGUAGE_TO_TESSERACT: dict[str, str] = {
     "Khmer (ភាសាខ្មែរ)": "khm",
     "Burmese (မြန်မာစာ)": "mya",
     "Tagalog/Filipino (Tagalog/Filipino)": "tgl",
+    "Indonesian (Bahasa Indonesia)": "ind",
     "Javanese (Basa Jawa)": "jav",
     "Sundanese (Basa Sunda)": "sun",
     "Malay (Bahasa Melayu)": "msa",

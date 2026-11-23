@@ -22,8 +22,11 @@ import { ImagesApi } from "../services/api/images";
 import { ImageAssetResponse } from "../services/api/types";
 import { resolveBackendAssetSource } from "@/utils/api";
 import { ImageEditorToolbar } from "./ImageEditorToolbar";
-
-const STOCK_IMAGE_PROVIDERS = new Set(["pexels", "pixabay"]);
+import {
+  resolveImageSources,
+  type ImageSourceId,
+} from "@/components/slide-editor/images/image-sources";
+import { ImageSourceToggle } from "@/components/slide-editor/images/ImageSourceToggle";
 
 interface ImageEditorProps {
   initialImage: string | null;
@@ -55,11 +58,13 @@ const ImageEditor = ({
   onImageChange,
 }: ImageEditorProps) => {
   const llmConfig = useSelector((state: RootState) => state.userConfig.llm_config);
-  const stockImageProvider = useMemo(() => {
-    if (llmConfig?.DISABLE_IMAGE_GENERATION) return null;
-    const id = (llmConfig?.IMAGE_PROVIDER || "").trim().toLowerCase();
-    return STOCK_IMAGE_PROVIDERS.has(id) ? id : null;
-  }, [llmConfig?.DISABLE_IMAGE_GENERATION, llmConfig?.IMAGE_PROVIDER]);
+  const sources = useMemo(() => resolveImageSources(llmConfig), [llmConfig]);
+  const [source, setSource] = useState<ImageSourceId>(
+    sources.defaultSource ?? "ai",
+  );
+  const isStockSource = source === "stock";
+  const stockProviderLabel =
+    sources.stockProvider === "pixabay" ? "Pixabay" : "Pexels";
 
   // State management
   const [previewImages, setPreviewImages] = useState(
@@ -111,16 +116,20 @@ const ImageEditor = ({
   }, [promptContent]);
 
   useEffect(() => {
-    if (stockImageProvider) {
-      setStockSearchResults([]);
-    }
-  }, [stockImageProvider]);
+    if (sources.availableSources.includes(source)) return;
+    if (sources.defaultSource) setSource(sources.defaultSource);
+  }, [source, sources.availableSources, sources.defaultSource]);
 
   useEffect(() => {
-    if (isOpen && !previousGeneratedImages.length && !stockImageProvider) {
+    setStockSearchResults([]);
+    setError(null);
+  }, [source]);
+
+  useEffect(() => {
+    if (isOpen && !previousGeneratedImages.length && sources.aiAvailable) {
       getPreviousGeneratedImage();
     }
-  }, [isOpen, stockImageProvider]);
+  }, [isOpen, sources.aiAvailable]);
 
   // Handle close with animation
   const handleClose = () => {
@@ -153,7 +162,7 @@ const ImageEditor = ({
    */
   const handleImageChange = (newImage: string) => {
     if (onImageChange) {
-      const promptForSlide = stockImageProvider
+      const promptForSlide = isStockSource
         ? (prompt.trim() || promptContent || "")
         : promptContent;
       onImageChange(newImage, promptForSlide);
@@ -228,21 +237,14 @@ const ImageEditor = ({
    * Stock image search (Pexels / Pixabay) — returns multiple URLs to pick from.
    */
   const handleStockImageSearch = async () => {
-    if (!prompt.trim()) {
-      setError("Please enter search keywords");
+    if (!sources.stockProvider) {
+      setError(
+        "Stock image search is unavailable. Add a Pexels or Pixabay API key in Settings.",
+      );
       return;
     }
-    if (!stockImageProvider) return;
-
-    const apiKey =
-      stockImageProvider === "pexels"
-        ? (llmConfig?.PEXELS_API_KEY || "").trim()
-        : (llmConfig?.PIXABAY_API_KEY || "").trim();
-
-    if (!apiKey) {
-      setError(
-        `Add your ${stockImageProvider === "pexels" ? "Pexels" : "Pixabay"} API key in Settings to search stock images.`
-      );
+    if (!prompt.trim()) {
+      setError("Please enter search keywords");
       return;
     }
 
@@ -250,8 +252,8 @@ const ImageEditor = ({
       setIsSearchingStock(true);
       setError(null);
       const urls = await ImagesApi.searchStockImages(prompt.trim(), 20, {
-        provider: stockImageProvider,
-        apiKey,
+        provider: sources.stockProvider,
+        apiKey: sources.stockApiKey ?? undefined,
       });
       setStockSearchResults(urls);
       if (urls.length === 0) {
@@ -261,7 +263,11 @@ const ImageEditor = ({
       console.error("Stock image search error", err);
       const message =
         err instanceof Error ? err.message : "Stock search failed. Please try again.";
-      setError(message);
+      setError(
+        sources.stockApiKey
+          ? message
+          : `${message} Add your ${stockProviderLabel} API key in Settings if it is not configured.`,
+      );
       setStockSearchResults([]);
     } finally {
       setIsSearchingStock(false);
@@ -276,7 +282,7 @@ const ImageEditor = ({
       setError("Please enter a prompt");
       return;
     }
-    if (stockImageProvider) {
+    if (isStockSource) {
       await handleStockImageSearch();
       return;
     }
@@ -380,7 +386,7 @@ const ImageEditor = ({
             <Tabs value={activeTab} className="w-full" onValueChange={handleTabChange}>
               <TabsList className="grid bg-blue-100 border border-blue-300 w-full grid-cols-3 mx-auto">
                 <TabsTrigger className="font-medium" value="generate">
-                  {stockImageProvider ? "Stock search" : "AI Generate"}
+                  Images
                 </TabsTrigger>
                 <TabsTrigger className="font-medium" value="upload">
                   Upload
@@ -392,6 +398,26 @@ const ImageEditor = ({
               {/* Generate Tab */}
               <TabsContent value="generate" className="mt-4 space-y-4 overflow-y-auto hide-scrollbar h-[85vh]">
                 <div className="space-y-4">
+                  {sources.availableSources.length ? (
+                    <ImageSourceToggle
+                      value={source}
+                      options={sources.availableSources}
+                      labels={{ stock: "Stock photos", ai: "AI generate" }}
+                      titles={{
+                        stock: `Search ${stockProviderLabel}`,
+                        ai: sources.aiProvider
+                          ? `Generate with ${sources.aiProvider}`
+                          : "Generate with AI",
+                      }}
+                      onChange={setSource}
+                    />
+                  ) : (
+                    <p className="text-sm text-gray-500">
+                      Add an image provider in Settings to search stock photos or
+                      generate images.
+                    </p>
+                  )}
+
                   <div>
                     <h3 className="text-sm font-medium mb-1">Current Prompt</h3>
                     <p className="text-sm text-gray-500">{promptContent}</p>
@@ -399,11 +425,11 @@ const ImageEditor = ({
 
                   <div>
                     <h3 className="text-base font-medium mb-2">
-                      {stockImageProvider ? "Search keywords" : "Image Description"}
+                      {isStockSource ? "Search keywords" : "Image Description"}
                     </h3>
                     <Textarea
                       placeholder={
-                        stockImageProvider
+                        isStockSource
                           ? "e.g. team collaboration, modern office, sunset mountains…"
                           : "Describe the image you want to generate..."
                       }
@@ -418,12 +444,12 @@ const ImageEditor = ({
                     className="w-full rounded-[38.4px] bg-[#EDEEEF] px-[12.8px] py-2 text-[#191919] shadow-none hover:bg-[#E1E1E5] disabled:bg-[#EDEEEF] disabled:text-[#999]"
                     disabled={!prompt.trim() || isGenerating || isSearchingStock}
                   >
-                    {stockImageProvider ? (
+                    {isStockSource ? (
                       <Search className="w-4 h-4 mr-2" />
                     ) : (
                       <Wand2 className="w-4 h-4 mr-2" />
                     )}
-                    {stockImageProvider
+                    {isStockSource
                       ? isSearchingStock
                         ? "Searching…"
                         : "Search stock images"
@@ -434,7 +460,7 @@ const ImageEditor = ({
 
                   {error && <p className="text-red-500 text-sm">{error}</p>}
 
-                  {stockImageProvider ? (
+                  {isStockSource ? (
                     <div className="space-y-3">
                       <h3 className="text-sm font-medium">Results — click an image to use it</h3>
                       <div className="grid grid-cols-2 gap-3">
@@ -462,8 +488,7 @@ const ImageEditor = ({
                       </div>
                       {!isSearchingStock && stockSearchResults.length === 0 && (
                         <p className="text-sm text-gray-500">
-                          Run a search to see thumbnails from{" "}
-                          {stockImageProvider === "pexels" ? "Pexels" : "Pixabay"}.
+                          Run a search to see thumbnails from {stockProviderLabel}.
                         </p>
                       )}
                     </div>

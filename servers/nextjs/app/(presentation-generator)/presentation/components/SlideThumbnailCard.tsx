@@ -1,6 +1,9 @@
-import React, { forwardRef, memo, useCallback } from "react";
+import React, { forwardRef, memo, useCallback, useMemo } from "react";
+import { useSelector } from "react-redux";
 import type { Slide } from "../../types/slide";
 import { useNearViewport } from "@/app/hooks/useNearViewport";
+import { resolveTypography } from "@/components/typography/effective";
+import type { RootState } from "@/store/store";
 import { V1ContentRender } from "../../components/V1ContentRender";
 import SmartHtmlSlide from "../../components/SmartHtmlSlide";
 import {
@@ -57,6 +60,20 @@ const SlideThumbnailCardComponent = forwardRef<
       slide,
       presentationVersion
     );
+    const presentationTypography = useSelector(
+      (state: RootState) =>
+        (state.presentationGeneration.presentationData as
+          | { typography?: unknown }
+          | null)?.typography ?? null
+    );
+    const effectiveTypography = useMemo(
+      () =>
+        resolveTypography(
+          presentationTypography as Parameters<typeof resolveTypography>[0],
+          (slide?.typography ?? null) as Parameters<typeof resolveTypography>[1]
+        ),
+      [presentationTypography, slide?.typography]
+    );
 
     return (
       <div
@@ -105,6 +122,7 @@ const SlideThumbnailCardComponent = forwardRef<
                 fonts={fonts}
                 html={slide.html_content}
                 title={`Slide ${index + 1} thumbnail`}
+                typography={effectiveTypography}
               />
             </div>
           ) : useTemplateV2HtmlPreview ? (

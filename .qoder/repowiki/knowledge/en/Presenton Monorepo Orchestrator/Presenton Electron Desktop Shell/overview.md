@@ -1,0 +1,1 @@
+Electron main process that hosts the Presenton desktop app, launching embedded FastAPI and Next.js servers, bridging renderer IPC, and packaging via electron-builder.

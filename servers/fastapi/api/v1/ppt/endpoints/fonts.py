@@ -5,6 +5,12 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from templates.preview import FontCheckResponse, check_fonts_in_pptx_handler
+from services.google_fonts import (
+    DEFAULT_WEIGHTS,
+    GoogleFontDownloadError,
+    GoogleFontNotFound,
+    resolve_google_font,
+)
 from utils.font_uploads import (
     FONT_CONTENT_TYPES,
     delete_font_upload,
@@ -147,6 +153,23 @@ async def get_uploaded_fonts():
         raise HTTPException(
             status_code=500, detail=f"Error getting uploaded fonts: {exc}"
         ) from exc
+
+
+class GoogleFontRequest(BaseModel):
+    family: str
+    weights: Optional[List[int]] = None
+
+
+@FONTS_ROUTER.post("/google")
+async def resolve_google_font_endpoint(payload: GoogleFontRequest):
+    try:
+        return await resolve_google_font(
+            payload.family, payload.weights or DEFAULT_WEIGHTS
+        )
+    except GoogleFontNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except GoogleFontDownloadError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 FONTS_ROUTER.post("/check", response_model=FontCheckResponse)(

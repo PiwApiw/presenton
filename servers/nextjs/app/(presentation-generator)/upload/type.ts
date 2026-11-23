@@ -1,8 +1,11 @@
+import type { TypographyConfig } from "@/components/typography/effective";
+
 export interface UploadedFile {
   id: string;
   file: File;
   size: string;
 }
+
 export enum ThemeType {
   Light = "light",
   Dark = "dark",
@@ -91,6 +94,7 @@ export enum LanguageType {
   Khmer = "Khmer (ភាសាខ្មែរ)",
   Burmese = "Burmese (မြန်မာစာ)",
   Tagalog = "Tagalog/Filipino (Tagalog/Filipino)",
+  Indonesian = "Indonesian (Bahasa Indonesia)",
   Javanese = "Javanese (Basa Jawa)",
   Sundanese = "Sundanese (Basa Sunda)",
   Malay = "Malay (Bahasa Melayu)",
@@ -129,6 +133,8 @@ export interface PresentationConfig {
   includeTableOfContents: boolean;
   includeTitleSlide: boolean;
   webSearch: boolean;
+  typography: TypographyConfig | null;
+  fonts: Record<string, string>;
 }
 
 export enum ToneType {

@@ -37,6 +37,7 @@ export interface Slide {
   layout_group?: string;
   html_content?: string | null;
   ui?: Record<string, unknown> | null;
+  typography?: Record<string, unknown> | null;
 
   content: SlideContent;
 }

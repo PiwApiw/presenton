@@ -14,6 +14,7 @@ import {
   X,
   AlertTriangle,
   MousePointer2,
+  Type,
 } from "lucide-react";
 import React, { useEffect, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
@@ -97,12 +98,13 @@ const PresentationHeader = ({
   isPresentationSaving,
   currentSlide,
   generationMode = "standard",
-
+  onOpenTypography,
 }: {
   presentation_id: string;
   isPresentationSaving: boolean;
   currentSlide?: number;
   generationMode?: "standard" | "smart";
+  onOpenTypography?: () => void;
 }) => {
   const [open, setOpen] = useState(false);
   const [shortcutsDialogOpen, setShortcutsDialogOpen] = useState(false);
@@ -719,6 +721,21 @@ const PresentationHeader = ({
               />
             </button>
           </ToolTip>)}
+
+          {onOpenTypography ? (
+            <ToolTip content="Pengaturan tipografi">
+              <button
+                type="button"
+                data-testid="typography-btn"
+                onClick={onOpenTypography}
+                disabled={isStreaming === true}
+                className="inline-flex h-[38px] items-center gap-2 rounded-xl border border-[#E4E4E8] bg-white px-3 font-syne text-xs font-semibold text-[#3D3D48] shadow-sm transition-colors hover:border-[#D7D2F5] hover:bg-[#FAF9FF] hover:text-[#5141E5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6D5DFB] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Type aria-hidden="true" className="h-3.5 w-3.5" strokeWidth={2} />
+                <span className="whitespace-nowrap">Tipografi</span>
+              </button>
+            </ToolTip>
+          ) : null}
 
           <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>

@@ -1,0 +1,86 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: en-US
+branch: main
+nodes_managed: true
+exported_at: "2026-10-25T16:34:54Z"
+modules:
+    "":
+        dir_name: Presenton Monorepo Orchestrator
+        title: Presenton Monorepo Orchestrator
+        scope:
+            - README.md
+            - VISION.md
+            - CODE_OF_CONDUCT.md
+            - CONTRIBUTING.md
+            - .gitignore
+            - .dockerignore
+            - package.json
+            - package-lock.json
+            - start.js
+            - layouts.json
+            - nginx.conf
+            - Dockerfile
+            - Dockerfile.dev
+            - docker-compose.yml
+            - test-local.sh
+            - test_server.py
+            - LICENSE
+            - NOTICE
+        source_files: []
+        children:
+            - build_scripts
+            - ci_and_deploy
+            - docs
+            - electron_desktop_app
+            - presentation_templates
+        depends_on: []
+        related_to: []
+    build_scripts:
+        dir_name: Build & Distribution Tooling
+        title: Build & Distribution Tooling
+        scope:
+            - scripts/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    ci_and_deploy:
+        dir_name: CI_CD & Deployment Pipelines
+        title: CI/CD & Deployment Pipelines
+        scope:
+            - .github/
+            - .do/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    docs:
+        dir_name: Presenton Documentation
+        title: Presenton Documentation
+        scope:
+            - docs/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    electron_desktop_app:
+        dir_name: Presenton Electron Desktop Shell
+        title: Presenton Electron Desktop Shell
+        scope:
+            - electron/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: presentation_templates
+    presentation_templates:
+        dir_name: Presentation Template Library
+        title: Presentation Template Library
+        scope:
+            - templates/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: electron_desktop_app

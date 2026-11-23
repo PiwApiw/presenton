@@ -26,6 +26,11 @@ import {
   TemplateV2HtmlSlidePreview,
 } from "@/app/(presentation-generator)/components/TemplateV2HtmlSlidePreview";
 import MarkdownRenderer from "@/components/MarkDownRender";
+import {
+  isAutoTypography,
+  resolveTypography,
+} from "@/components/typography/effective";
+import { applyTypographyToSlide } from "@/components/typography/apply-to-slide";
 import { trackEvent, MixpanelEvent } from "@/utils/mixpanel";
 
 export const PresentationCard = ({
@@ -120,6 +125,19 @@ export const PresentationCard = ({
     }
   };
   const firstSlide = presentation?.slides?.[0];
+  // Resolve from this deck's own data: the editor store may still hold another
+  // presentation's typography.
+  const cardTypography = resolveTypography(
+    presentation?.typography ?? null,
+    firstSlide?.typography ?? null
+  );
+  const cardSlide =
+    firstSlide && !isAutoTypography(cardTypography)
+      ? {
+          ...firstSlide,
+          ui: applyTypographyToSlide(firstSlide.ui, cardTypography),
+        }
+      : firstSlide;
   const useTemplateV2HtmlPreview = shouldRenderTemplateV2HtmlPreview(
     firstSlide,
     presentation?.version
@@ -163,13 +181,14 @@ export const PresentationCard = ({
             </div>
           ) : useTemplateV2HtmlPreview ? (
             <TemplateV2HtmlSlidePreview
-              slide={firstSlide}
+              slide={cardSlide}
               fonts={presentation.fonts}
             />
           ) : (
             <SlideScale
-              slide={firstSlide}
+              slide={cardSlide}
               fonts={presentation.fonts}
+              typography={cardTypography}
               isClickable={false}
               presentationLayout={presentation.layout}
             />

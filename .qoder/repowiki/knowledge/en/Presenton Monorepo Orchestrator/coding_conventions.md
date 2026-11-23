@@ -1,0 +1,3 @@
+- Runtime configuration flows exclusively through environment variables declared in `docker-compose.yml` and resolved by `scripts/user-config-env.cjs` into a persisted `userConfig.json` under `APP_DATA_DIRECTORY`.
+- Child services are launched via `child_process.spawn` with stdio piped through a line-forwarder that suppresses repeated localhost startup URLs in production.
+- Readiness is verified by polling either stdout patterns (`Application startup complete.` / `Ready in`) or HTTP endpoints (`/api/v1/auth/status`) rather than relying on process exit codes alone.

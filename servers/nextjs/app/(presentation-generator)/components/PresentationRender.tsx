@@ -1,5 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useSelector } from "react-redux";
 
+import { resolveTypography } from "@/components/typography/effective";
+import type { TypographyConfig } from "@/components/typography/effective";
+import type { RootState } from "@/store/store";
 import { V1ContentRender } from "../../(presentation-generator)/components/V1ContentRender";
 import SmartHtmlEditor from "./SmartHtmlEditor";
 import SmartHtmlSlide from "./SmartHtmlSlide";
@@ -13,6 +17,9 @@ const SlideScale = ({
   theme,
   fonts,
   isEditMode = true,
+
+  /** Presentation-level typography. Falls back to the store when omitted. */
+  typography,
 
   /** Fill viewport; scale may exceed 1 so slides appear larger in present mode */
   presentMode = false,
@@ -34,6 +41,7 @@ const SlideScale = ({
   theme?: any;
   fonts?: unknown;
   isEditMode?: boolean;
+  typography?: TypographyConfig | null;
 
   presentMode?: boolean;
   isClickable?: boolean;
@@ -51,6 +59,23 @@ const SlideScale = ({
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
+
+  const presentationTypography = useSelector(
+    (state: RootState) =>
+      (state.presentationGeneration.presentationData as
+        | { typography?: unknown }
+        | null)?.typography ?? null
+  );
+  const baseTypography =
+    typography !== undefined ? typography : presentationTypography;
+  const effectiveTypography = useMemo(
+    () =>
+      resolveTypography(
+        baseTypography as Parameters<typeof resolveTypography>[0],
+        (slide?.typography ?? null) as Parameters<typeof resolveTypography>[1]
+      ),
+    [baseTypography, slide?.typography]
+  );
 
   const scale = useMemo(() => {
     if (fixedSize) return 1;
@@ -143,6 +168,7 @@ const SlideScale = ({
                   renderIndex={renderIndex}
                   fonts={fonts}
                   title={`Slide ${(renderIndex ?? slide.index ?? 0) + 1}`}
+                  typography={effectiveTypography}
                 />
               ) : (
                 <SmartHtmlSlide
@@ -150,6 +176,7 @@ const SlideScale = ({
                   fonts={fonts}
                   html={slide.html_content}
                   title={`Slide ${(renderIndex ?? slide.index ?? 0) + 1}`}
+                  typography={effectiveTypography}
                 />
               )
             ) : (

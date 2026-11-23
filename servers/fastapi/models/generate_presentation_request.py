@@ -44,6 +44,8 @@ class GeneratePresentationRequest(BaseModel):
     trigger_webhook: bool = Field(
         default=False, description="Whether to trigger subscribed webhooks"
     )
+    typography: Optional[dict] = None
+    fonts: Optional[dict[str, str]] = None
 
 
 class GenerateSmartPresentationRequest(BaseModel):
@@ -62,3 +64,5 @@ class GenerateSmartPresentationRequest(BaseModel):
     )
     community_design_ids: Optional[List[int]] = None
     export_as: Literal["pptx", "pdf"] = "pptx"
+    typography: Optional[dict] = None
+    fonts: Optional[dict[str, str]] = None

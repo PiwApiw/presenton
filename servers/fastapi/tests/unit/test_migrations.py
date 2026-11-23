@@ -908,3 +908,31 @@ def test_upgrade_from_template_v2_theme_adds_unified_keys_and_task_payload(tmp_p
         assert "access_tokens" not in tables
     finally:
         engine.dispose()
+
+
+def test_upgrade_from_unified_api_keys_adds_typography_columns(tmp_path):
+    database_url = f"sqlite:///{tmp_path / 'typography-columns.db'}"
+    engine = create_engine(database_url)
+    try:
+        config = _alembic_config(database_url)
+        command.upgrade(config, migrations.REVISION_UNIFIED_API_KEYS)
+        command.upgrade(config, "head")
+
+        with engine.connect() as connection:
+            version = connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one()
+            presentation_columns = {
+                row[1]
+                for row in connection.execute(text("PRAGMA table_info(presentations)"))
+            }
+            slide_columns = {
+                row[1]
+                for row in connection.execute(text("PRAGMA table_info(slides)"))
+            }
+
+        assert version == migrations.REVISION_HEAD
+        assert "typography" in presentation_columns
+        assert "typography" in slide_columns
+    finally:
+        engine.dispose()

@@ -22,6 +22,13 @@ import {
 import { normalizeBackendAssetUrls } from "@/utils/api";
 import { ensureTailwindBrowserScript } from "@/lib/tailwind-browser";
 import { useSmartChartInjection } from "@/app/(presentation-generator)/components/useSmartChartInjection";
+import {
+  isAutoTypography,
+  resolveTypography,
+  scopeTypographyCss,
+  typographyStyleCss,
+} from "@/components/typography/effective";
+import { applyTypographyToSlide } from "@/components/typography/apply-to-slide";
 
 const PDF_PRINT_STYLE = `
   html,
@@ -107,9 +114,11 @@ type PresentationPageProps = {
 const SmartHtmlPdfSlide = ({
   slide,
   index,
+  typographyCss,
 }: {
   slide: { id?: string | null; index?: number; html_content?: string | null };
   index: number;
+  typographyCss?: string;
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const html = slide.html_content?.trim() ?? "";
@@ -127,6 +136,7 @@ const SmartHtmlPdfSlide = ({
 
   return (
     <div className="smart-slide-export-root h-[720px] w-[1280px] overflow-hidden bg-white">
+      {typographyCss ? <style>{typographyCss}</style> : null}
       <div className="smart-slide-export-content h-[720px] w-[1280px] overflow-hidden bg-white">
         <div
           ref={containerRef}
@@ -276,11 +286,37 @@ const PresentationPage = ({ presentation_id, exportCookie }: PresentationPagePro
                     slide,
                     presentationData?.version
                   );
+                const slideDomId = `slide-${slide.index}`;
+                const resolvedTypography = resolveTypography(
+                  presentationData?.typography ?? null,
+                  slide?.typography ?? null
+                );
+                const hasTypography = !isAutoTypography(resolvedTypography);
+                // Exported markup is a single document, so every slide's role CSS
+                // is scoped to that slide's container.
+                const typographyCss = hasTypography
+                  ? scopeTypographyCss(
+                      typographyStyleCss(resolvedTypography),
+                      `#${slideDomId}`
+                    )
+                  : "";
+                const exportSlide =
+                  hasTypography &&
+                  typeof slide?.ui === "object" &&
+                  slide.ui !== null
+                    ? {
+                        ...slide,
+                        ui: applyTypographyToSlide(
+                          slide.ui,
+                          resolvedTypography
+                        ),
+                      }
+                    : slide;
 
                 return (
                   <div
                     key={`${slide.type}-${index}-${slide.index}`}
-                    id={`slide-${slide.index}`}
+                    id={slideDomId}
                     className="main-slide relative flex items-center justify-center"
                     data-speaker-note={slide.speaker_note ?? ""}
                   >
@@ -291,13 +327,17 @@ const PresentationPage = ({ presentation_id, exportCookie }: PresentationPagePro
                     >
                       {useTemplateV2HtmlPreview ? (
                         <TemplateV2HtmlSlidePreview
-                          slide={slide}
+                          slide={exportSlide}
                           fonts={presentationData?.fonts}
                           fixedSize
                         />
                       ) : typeof slide?.html_content === "string" &&
                         slide.html_content.trim() ? (
-                        <SmartHtmlPdfSlide slide={slide} index={index} />
+                        <SmartHtmlPdfSlide
+                          slide={slide}
+                          index={index}
+                          typographyCss={typographyCss}
+                        />
                       ) : (
                         <SlideScale
                           slide={slide}

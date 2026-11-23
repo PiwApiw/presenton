@@ -1,0 +1,1 @@
+Data-driven library of 16 branded presentation templates, each defined by a JSON schema describing merged components, variants, fonts, and static assets.

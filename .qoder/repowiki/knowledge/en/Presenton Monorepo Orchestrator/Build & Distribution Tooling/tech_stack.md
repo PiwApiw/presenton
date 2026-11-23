@@ -1,0 +1,1 @@
+Node.js ESM (`.mjs`) and CommonJS (`.cjs`) scripts using only built-in modules (`node:fs/promises`, `node:path`, `node:crypto`, `https`, `child_process`); Python 3 script using stdlib `pathlib`/`argparse`; external dependency limited to `@presenton/export-core` which is downloaded at runtime rather than declared in this repo's package.json.

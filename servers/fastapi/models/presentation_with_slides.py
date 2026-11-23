@@ -20,6 +20,7 @@ class PresentationWithSlides(BaseModel):
     verbosity: Optional[str] = None
     slides: List[SlideModel]
     fonts: Optional[Any] = None
+    typography: Optional[dict[str, Any]] = None
     theme: Optional[dict[str, Any]] = None
     generation_mode: Literal["standard", "smart"] = "standard"
     type: Literal["standard", "smart"] = "standard"
